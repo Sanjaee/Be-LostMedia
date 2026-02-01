@@ -72,7 +72,7 @@ func (r *notificationRepository) FindByID(id string) (*model.Notification, error
 // FindByUserID finds notifications for a user with pagination
 func (r *notificationRepository) FindByUserID(userID string, limit, offset int) ([]*model.Notification, error) {
 	var notifications []*model.Notification
-	err := r.db.Preload("User").
+	err := r.db.Preload("User").Preload("Sender").
 		Where("user_id = ?", userID).
 		Order("created_at DESC").
 		Limit(limit).
@@ -95,7 +95,7 @@ func (r *notificationRepository) FindUnreadByUserID(userID string) ([]*model.Not
 	}
 
 	var notifications []*model.Notification
-	err := r.db.Preload("User").
+	err := r.db.Preload("User").Preload("Sender").
 		Where("user_id = ? AND is_read = ?", userID, false).
 		Order("created_at DESC").
 		Find(&notifications).Error

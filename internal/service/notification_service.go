@@ -23,13 +23,17 @@ type NotificationService interface {
 	MarkAsRead(notificationID, userID string) error
 	MarkAllAsRead(userID string) error
 	DeleteNotification(notificationID, userID string) error
-	SetWSHub(hub interface{ BroadcastToUser(string, map[string]interface{}) })
+	SetWSHub(hub interface {
+		BroadcastToUser(string, map[string]interface{})
+	})
 }
 
 type notificationService struct {
 	notifRepo repository.NotificationRepository
 	rabbitMQ  *util.RabbitMQClient
-	wsHub     interface{ BroadcastToUser(string, map[string]interface{}) } // WebSocket hub interface
+	wsHub     interface {
+		BroadcastToUser(string, map[string]interface{})
+	} // WebSocket hub interface
 }
 
 // NotificationMessage represents the message structure for RabbitMQ
@@ -56,7 +60,9 @@ func NewNotificationService(notifRepo repository.NotificationRepository, rabbitM
 }
 
 // SetWSHub sets the WebSocket hub for realtime notifications
-func (s *notificationService) SetWSHub(hub interface{ BroadcastToUser(string, map[string]interface{}) }) {
+func (s *notificationService) SetWSHub(hub interface {
+	BroadcastToUser(string, map[string]interface{})
+}) {
 	s.wsHub = hub
 }
 
@@ -74,8 +80,18 @@ func (s *notificationService) sendNotification(
 		IsRead:  false,
 	}
 
-	// Convert data to JSON string if provided
+	// Extract sender_id and target_id from data if available
 	if data != nil {
+		if senderID, ok := data["sender_id"].(string); ok {
+			notification.SenderID = &senderID
+		}
+		if targetID, ok := data["friendship_id"].(string); ok {
+			notification.TargetID = &targetID
+		} else if targetID, ok := data["target_id"].(string); ok {
+			notification.TargetID = &targetID
+		}
+
+		// Convert data to JSON string if provided
 		dataJSON, err := json.Marshal(data)
 		if err == nil {
 			notification.Data = string(dataJSON)
