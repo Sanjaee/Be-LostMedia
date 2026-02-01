@@ -215,3 +215,24 @@ func (h *FriendshipHandler) GetFriendshipStatus(c *gin.Context) {
 
 	util.SuccessResponse(c, http.StatusOK, "Friendship status retrieved successfully", gin.H{"status": status})
 }
+
+// GetFriendsCount handles getting friends count for a user
+// GET /api/v1/friendships/count/:userID
+func (h *FriendshipHandler) GetFriendsCount(c *gin.Context) {
+	targetUserID := c.Param("userID")
+	if targetUserID == "" {
+		util.BadRequest(c, "User ID is required")
+		return
+	}
+
+	followers, following, err := h.friendshipService.GetFriendsCount(targetUserID)
+	if err != nil {
+		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "Friends count retrieved successfully", gin.H{
+		"followers": followers,
+		"following": following,
+	})
+}

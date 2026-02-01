@@ -109,6 +109,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	postService := service.NewPostService(postRepo, userRepo, friendshipRepo)
 
 	// Initialize notification worker if RabbitMQ is available
+	// TODO: Re-enable RabbitMQ worker later for async processing
+	/*
 	if rabbitMQ != nil {
 		notificationWorker := service.NewNotificationWorker(notificationService, rabbitMQ, wsHub)
 		if err := notificationWorker.Start(); err != nil {
@@ -117,6 +119,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			log.Println("Notification worker started successfully")
 		}
 	}
+	*/
+	// For now, notifications are sent directly via WebSocket (no RabbitMQ)
 
 	// Initialize handlers
 	authHandler := NewAuthHandler(authService, cfg.JWTSecret)
@@ -183,6 +187,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 				friendships.GET("/pending", friendshipHandler.GetPendingRequests)
 				friendships.GET("/friends", friendshipHandler.GetFriends)
 				friendships.GET("/status/:userID", friendshipHandler.GetFriendshipStatus)
+				friendships.GET("/count/:userID", friendshipHandler.GetFriendsCount)
 				friendships.GET("/:id", friendshipHandler.GetFriendship)
 				friendships.POST("/:id/accept", friendshipHandler.AcceptFriendRequest)
 				friendships.POST("/:id/reject", friendshipHandler.RejectFriendRequest)

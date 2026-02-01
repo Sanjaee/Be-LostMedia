@@ -121,7 +121,7 @@ func (s *profileService) GetProfileByID(profileID string) (*model.Profile, error
 // Auto-creates profile if it doesn't exist
 func (s *profileService) GetProfileByUserID(userID string) (*model.Profile, error) {
 	// Check if user exists first
-	_, err := s.userRepo.FindByID(userID)
+	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
 		return nil, errors.New("user not found")
 	}
@@ -140,8 +140,19 @@ func (s *profileService) GetProfileByUserID(userID string) (*model.Profile, erro
 			return nil, fmt.Errorf("failed to create profile: %w", err)
 		}
 
-		// Reload with user relationship
-		return s.profileRepo.FindByID(profile.ID)
+		// Reload with user relationship to ensure User data is loaded
+		profile, err = s.profileRepo.FindByUserID(userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reload profile: %w", err)
+		}
+	}
+
+	// Always ensure User data is loaded (in case cache didn't include it or Preload failed)
+	if profile.User.ID == "" || profile.User.ID != userID {
+		// Manually set user data since we already loaded it
+		profile.User = *user
+		// Update cache with User data
+		// Note: We don't have direct access to repo here, but repository should handle this
 	}
 
 	return profile, nil

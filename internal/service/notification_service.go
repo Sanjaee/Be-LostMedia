@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"yourapp/internal/model"
@@ -103,36 +102,17 @@ func (s *notificationService) sendNotification(
 		return fmt.Errorf("failed to create notification: %w", err)
 	}
 
-	// Send to RabbitMQ for async processing and WebSocket push
-	if s.rabbitMQ != nil {
-		msg := NotificationMessage{
-			UserID:    userID,
-			Type:      notifType,
-			Title:     title,
-			Message:   message,
-			Data:      data,
-			Timestamp: time.Now(),
-		}
-
-		msgJSON, err := json.Marshal(msg)
-		if err != nil {
-			log.Printf("Failed to marshal notification message: %v", err)
-			return err
-		}
-
-		// Publish to RabbitMQ (async, non-blocking)
-		if s.rabbitMQ != nil {
-			if err := s.rabbitMQ.Publish(NotificationExchange, NotificationQueueName, msgJSON); err != nil {
-				log.Printf("Failed to publish notification to RabbitMQ: %v", err)
-				// Don't return error, notification is already saved in DB
-			}
-		}
-	}
+	// Push directly to WebSocket (simplified, no RabbitMQ for now)
+	// TODO: Re-enable RabbitMQ for async processing later
 
 	// Push to WebSocket if hub is available
+	// IMPORTANT: WebSocket only sends notification data, NOT friendship status
+	// Frontend must always fetch status from DB via API, never from WebSocket
 	if s.wsHub != nil {
 		// Prepare notification payload for WebSocket
 		// Format: direct notification object (not wrapped in payload)
+		// NOTE: This only contains notification info, NOT friendship status
+		// Frontend will trigger DB refresh when receiving friendship-related notifications
 		wsPayload := map[string]interface{}{
 			"id":         notification.ID,
 			"user_id":    notification.UserID,

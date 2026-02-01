@@ -27,9 +27,9 @@ type profileRepository struct {
 }
 
 const (
-	profileCachePrefix     = "profile:"
+	profileCachePrefix       = "profile:"
 	profileByUserCachePrefix = "profile:user:"
-	cacheExpiration        = 30 * time.Minute
+	cacheExpiration          = 30 * time.Minute
 )
 
 func NewProfileRepository(db *gorm.DB, redis *util.RedisClient) ProfileRepository {
@@ -88,24 +88,28 @@ func (r *profileRepository) FindByID(id string) (*model.Profile, error) {
 	return &profile, nil
 }
 
-// FindByUserID finds a profile by user ID, checking cache first
+// FindByUserID finds a profile by user ID, always loads fresh from DB to ensure User data
 func (r *profileRepository) FindByUserID(userID string) (*model.Profile, error) {
-	// Try to get from cache first
-	if r.redis != nil {
-		cached, err := r.getFromCache(getUserCacheKey(userID))
-		if err == nil && cached != nil {
-			return cached, nil
-		}
-	}
-
-	// If not in cache, get from database
+	// Always load from DB to ensure User data is fresh and loaded
+	// Cache might not include User data, so we bypass it for now
 	var profile model.Profile
 	err := r.db.Preload("User").Where("user_id = ?", userID).First(&profile).Error
 	if err != nil {
 		return nil, err
 	}
 
-	// Cache the result
+	// Verify User data is loaded - if Preload failed, manually load user
+	if profile.User.ID == "" || profile.User.ID != userID {
+		var user model.User
+		if err := r.db.Where("id = ?", userID).First(&user).Error; err == nil {
+			profile.User = user
+		} else {
+			// User not found - this shouldn't happen but handle gracefully
+			return nil, fmt.Errorf("user not found: %s", userID)
+		}
+	}
+
+	// Cache the result (with User data)
 	if r.redis != nil {
 		r.cacheProfile(&profile)
 	}

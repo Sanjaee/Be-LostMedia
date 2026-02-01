@@ -18,6 +18,7 @@ type FriendshipService interface {
 	GetPendingRequests(userID string) ([]*model.Friendship, error)
 	GetFriends(userID string) ([]*model.Friendship, error)
 	GetFriendshipStatus(userID1, userID2 string) (string, error)
+	GetFriendsCount(userID string) (int64, int64, error)
 }
 
 type friendshipService struct {
@@ -244,12 +245,28 @@ func (s *friendshipService) GetFriends(userID string) ([]*model.Friendship, erro
 }
 
 // GetFriendshipStatus gets the friendship status between two users
-// This method always fetches fresh data from DB (bypasses cache)
+// IMPORTANT: This method ALWAYS fetches fresh data from DB (bypasses cache)
+// WebSocket notifications only trigger frontend to call this method, never provide status directly
 func (s *friendshipService) GetFriendshipStatus(userID1, userID2 string) (string, error) {
+	// Always fetch from DB, never from cache or WebSocket
 	friendship, err := s.friendshipRepo.FindBySenderAndReceiver(userID1, userID2)
 	if err != nil {
 		return "none", nil // No friendship exists
 	}
 	// Return the status - cache is already invalidated in FindBySenderAndReceiver
 	return friendship.Status, nil
+}
+
+// GetFriendsCount gets the friends count (followers and following) for a user
+func (s *friendshipService) GetFriendsCount(userID string) (int64, int64, error) {
+	// Get all accepted friendships for this user
+	friendships, err := s.friendshipRepo.FindAcceptedByUserID(userID)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// In accepted friendship, both users are friends
+	// So both followers and following are the same (total friends)
+	count := int64(len(friendships))
+	return count, count, nil
 }
