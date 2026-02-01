@@ -15,7 +15,6 @@ type Post struct {
 	Content      *string        `gorm:"type:text" json:"content,omitempty"`
 	ImageURLs    string         `gorm:"type:jsonb" json:"image_urls,omitempty"` // Array of image URLs stored as JSON
 	SharedPostID *string        `gorm:"type:uuid;index;references:posts(id)" json:"shared_post_id,omitempty"`
-	Privacy      string         `gorm:"type:varchar(20);default:'public'" json:"privacy"` // public, friends, only_me
 	IsPinned     bool           `gorm:"default:false" json:"is_pinned"`
 	CreatedAt    time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt    time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
@@ -28,13 +27,6 @@ type Post struct {
 	Tags       []PostTag     `gorm:"foreignKey:PostID;references:ID" json:"tags,omitempty"`
 	Location   *PostLocation `gorm:"foreignKey:PostID;references:ID" json:"location,omitempty"`
 }
-
-// Privacy constants
-const (
-	PrivacyPublic  = "public"
-	PrivacyFriends = "friends"
-	PrivacyOnlyMe  = "only_me"
-)
 
 // BeforeCreate hook to generate UUID
 func (p *Post) BeforeCreate(tx *gorm.DB) error {
@@ -51,7 +43,7 @@ func (Post) TableName() string {
 
 // GetImageURLs returns ImageURLs as a slice of strings
 func (p *Post) GetImageURLs() []string {
-	if p.ImageURLs == "" {
+	if p.ImageURLs == "" || p.ImageURLs == "[]" {
 		return []string{}
 	}
 	var urls []string
@@ -64,7 +56,8 @@ func (p *Post) GetImageURLs() []string {
 // SetImageURLs sets ImageURLs from a slice of strings
 func (p *Post) SetImageURLs(urls []string) error {
 	if len(urls) == 0 {
-		p.ImageURLs = ""
+		// Use empty JSON array instead of empty string for PostgreSQL JSONB
+		p.ImageURLs = "[]"
 		return nil
 	}
 	bytes, err := json.Marshal(urls)

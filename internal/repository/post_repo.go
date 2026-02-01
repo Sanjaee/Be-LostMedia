@@ -155,8 +155,7 @@ func (r *postRepository) FindByGroupID(groupID string, limit, offset int) ([]*mo
 	return posts, nil
 }
 
-// FindFeed finds feed posts for a user (friends' posts + own posts)
-// This is a simplified version - in production, you'd want to filter by privacy settings
+// FindFeed finds feed posts for a user (all posts from all users - all posts are public)
 func (r *postRepository) FindFeed(userID string, limit, offset int) ([]*model.Post, error) {
 	// Try to get from cache first
 	cacheKey := fmt.Sprintf("%s%s:%d:%d", postFeedCachePrefix, userID, limit, offset)
@@ -167,29 +166,10 @@ func (r *postRepository) FindFeed(userID string, limit, offset int) ([]*model.Po
 		}
 	}
 
-	// Get user's friends (accepted friendships)
-	var friendships []*model.Friendship
-	if err := r.db.Where("(sender_id = ? OR receiver_id = ?) AND status = ?", userID, userID, model.FriendshipStatusAccepted).
-		Find(&friendships).Error; err != nil {
-		return nil, err
-	}
-
-	// Collect friend IDs
-	friendIDs := []string{userID} // Include own posts
-	for _, f := range friendships {
-		if f.SenderID == userID {
-			friendIDs = append(friendIDs, f.ReceiverID)
-		} else {
-			friendIDs = append(friendIDs, f.SenderID)
-		}
-	}
-
-	// Get posts from friends and own posts
-	// For now, we'll show public and friends posts
+	// Get all posts (all posts are public now)
 	var posts []*model.Post
 	err := r.db.Preload("User").Preload("Group").Preload("SharedPost").
 		Preload("Tags.TaggedUser").Preload("Location").
-		Where("user_id IN ? AND (privacy = ? OR privacy = ?)", friendIDs, model.PrivacyPublic, model.PrivacyFriends).
 		Where("group_id IS NULL"). // Exclude group posts from feed for now
 		Order("created_at DESC").
 		Limit(limit).Offset(offset).
