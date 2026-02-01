@@ -298,8 +298,33 @@ func initRedisWithRetry(cfg *config.Config) *util.RedisClient {
 }
 
 func corsMiddleware(clientURL string) gin.HandlerFunc {
+	// Allowed origins (whitelist)
+	allowedOrigins := []string{
+		clientURL, // Default from config
+		"http://localhost:3000",
+		"https://lost-media-dev.vercel.app",
+		"https://lostmedia.zacloth.com",
+	}
+
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", clientURL)
+		origin := c.Request.Header.Get("Origin")
+
+		// Check if origin is in whitelist
+		allowed := false
+		for _, allowedOrigin := range allowedOrigins {
+			if origin == allowedOrigin {
+				allowed = true
+				break
+			}
+		}
+
+		// If origin is allowed, set it; otherwise, use default
+		if allowed {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", clientURL)
+		}
+
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
