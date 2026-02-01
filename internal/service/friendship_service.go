@@ -124,6 +124,10 @@ func (s *friendshipService) AcceptFriendRequest(friendshipID, userID string) (*m
 		return nil, fmt.Errorf("failed to accept friendship: %w", err)
 	}
 
+	// Delete friend_request notification for receiver (sync, before sending new notification)
+	// This ensures the old notification is removed before new one is sent
+	s.notifService.DeleteByTargetIDAndType(friendship.ID, model.NotificationTypeFriendRequest)
+
 	// Send notification to sender (async)
 	go func() {
 		receiver, _ := s.userRepo.FindByID(friendship.ReceiverID)
@@ -137,8 +141,9 @@ func (s *friendshipService) AcceptFriendRequest(friendshipID, userID string) (*m
 		}
 	}()
 
-	// Reload with relationships
-	return s.friendshipRepo.FindByID(friendship.ID)
+	// Reload with relationships - cache already invalidated by Update
+	// Return the updated friendship directly to avoid stale cache
+	return friendship, nil
 }
 
 // RejectFriendRequest rejects a friend request
@@ -156,6 +161,14 @@ func (s *friendshipService) RejectFriendRequest(friendshipID, userID string) err
 
 	// Check if request is pending
 	if friendship.Status != model.FriendshipStatusPending {
+		// If already accepted, return error
+		if friendship.Status == model.FriendshipStatusAccepted {
+			return errors.New("cannot reject an accepted friendship")
+		}
+		// If already rejected, return error
+		if friendship.Status == model.FriendshipStatusRejected {
+			return errors.New("friend request already rejected")
+		}
 		return errors.New("cannot reject a non-pending request")
 	}
 
@@ -164,6 +177,10 @@ func (s *friendshipService) RejectFriendRequest(friendshipID, userID string) err
 	if err := s.friendshipRepo.Update(friendship); err != nil {
 		return fmt.Errorf("failed to reject friendship: %w", err)
 	}
+
+	// Delete friend_request notification for receiver (sync)
+	// This ensures the old notification is removed
+	s.notifService.DeleteByTargetIDAndType(friendship.ID, model.NotificationTypeFriendRequest)
 
 	// Send notification to sender (async)
 	go func() {
@@ -227,10 +244,12 @@ func (s *friendshipService) GetFriends(userID string) ([]*model.Friendship, erro
 }
 
 // GetFriendshipStatus gets the friendship status between two users
+// This method always fetches fresh data from DB (bypasses cache)
 func (s *friendshipService) GetFriendshipStatus(userID1, userID2 string) (string, error) {
 	friendship, err := s.friendshipRepo.FindBySenderAndReceiver(userID1, userID2)
 	if err != nil {
 		return "none", nil // No friendship exists
 	}
+	// Return the status - cache is already invalidated in FindBySenderAndReceiver
 	return friendship.Status, nil
 }

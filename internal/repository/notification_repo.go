@@ -21,6 +21,7 @@ type NotificationRepository interface {
 	MarkAllAsRead(userID string) error
 	Delete(id string) error
 	DeleteByUserID(userID string) error
+	DeleteByTargetIDAndType(targetID, notifType string) error
 }
 
 type notificationRepository struct {
@@ -228,6 +229,31 @@ func (r *notificationRepository) DeleteByUserID(userID string) error {
 		r.invalidateUserCache(userID)
 		r.invalidateUnreadCache(userID)
 		r.invalidateCountCache(userID)
+	}
+
+	return nil
+}
+
+// DeleteByTargetIDAndType deletes notifications by target_id and type
+func (r *notificationRepository) DeleteByTargetIDAndType(targetID, notifType string) error {
+	// Find all notifications with this target_id and type
+	var notifications []*model.Notification
+	if err := r.db.Where("target_id = ? AND type = ?", targetID, notifType).Find(&notifications).Error; err != nil {
+		return err
+	}
+
+	// Delete notifications
+	if err := r.db.Where("target_id = ? AND type = ?", targetID, notifType).Delete(&model.Notification{}).Error; err != nil {
+		return err
+	}
+
+	// Invalidate cache for affected users
+	if r.redis != nil {
+		for _, notif := range notifications {
+			r.invalidateUserCache(notif.UserID)
+			r.invalidateUnreadCache(notif.UserID)
+			r.invalidateCountCache(notif.UserID)
+		}
 	}
 
 	return nil

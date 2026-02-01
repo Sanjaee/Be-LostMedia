@@ -43,7 +43,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	}
 
 	// Auto migrate
-	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}); err != nil {
 		panic("Failed to migrate database: " + err.Error())
 	}
 
@@ -55,6 +55,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	profileRepo := repository.NewProfileRepository(db, redisClient)
 	friendshipRepo := repository.NewFriendshipRepository(db, redisClient)
 	notificationRepo := repository.NewNotificationRepository(db, redisClient)
+	postRepo := repository.NewPostRepository(db, redisClient)
 
 	// Initialize RabbitMQ with retry logic
 	rabbitMQ := initRabbitMQWithRetry(cfg)
@@ -105,6 +106,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	notificationService := service.NewNotificationService(notificationRepo, rabbitMQ)
 	notificationService.SetWSHub(wsHub)
 	friendshipService := service.NewFriendshipService(friendshipRepo, userRepo, notificationService)
+	postService := service.NewPostService(postRepo, userRepo, friendshipRepo)
 
 	// Initialize notification worker if RabbitMQ is available
 	if rabbitMQ != nil {
@@ -121,6 +123,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	profileHandler := NewProfileHandler(profileService, cfg.JWTSecret)
 	friendshipHandler := NewFriendshipHandler(friendshipService, cfg.JWTSecret)
 	notificationHandler := NewNotificationHandler(notificationService, cfg.JWTSecret)
+	postHandler := NewPostHandler(postService, cfg.JWTSecret)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -199,6 +202,26 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 				notifications.PUT("/:id/read", notificationHandler.MarkAsRead)
 				notifications.PUT("/read-all", notificationHandler.MarkAllAsRead)
 				notifications.DELETE("/:id", notificationHandler.DeleteNotification)
+			}
+		}
+
+		// Post routes
+		posts := api.Group("/posts")
+		{
+			// Public routes (some posts can be viewed without auth)
+			posts.GET("/:id", postHandler.GetPost)
+			posts.GET("/user/:userID", postHandler.GetPostsByUserID)
+			posts.GET("/user/:userID/count", postHandler.CountPostsByUserID)
+			posts.GET("/group/:groupID", postHandler.GetPostsByGroupID)
+			posts.GET("/group/:groupID/count", postHandler.CountPostsByGroupID)
+
+			// Protected routes
+			posts.Use(authHandler.AuthMiddleware())
+			{
+				posts.POST("", postHandler.CreatePost)
+				posts.GET("/feed", postHandler.GetFeed)
+				posts.PUT("/:id", postHandler.UpdatePost)
+				posts.DELETE("/:id", postHandler.DeletePost)
 			}
 		}
 	}

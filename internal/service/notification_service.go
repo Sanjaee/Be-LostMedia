@@ -23,6 +23,7 @@ type NotificationService interface {
 	MarkAsRead(notificationID, userID string) error
 	MarkAllAsRead(userID string) error
 	DeleteNotification(notificationID, userID string) error
+	DeleteByTargetIDAndType(targetID, notifType string) error
 	SetWSHub(hub interface {
 		BroadcastToUser(string, map[string]interface{})
 	})
@@ -130,10 +131,34 @@ func (s *notificationService) sendNotification(
 
 	// Push to WebSocket if hub is available
 	if s.wsHub != nil {
-		s.wsHub.BroadcastToUser(userID, map[string]interface{}{
-			"type":    "notification",
-			"payload": notification,
-		})
+		// Prepare notification payload for WebSocket
+		// Format: direct notification object (not wrapped in payload)
+		wsPayload := map[string]interface{}{
+			"id":         notification.ID,
+			"user_id":    notification.UserID,
+			"type":       notification.Type,
+			"title":      notification.Title,
+			"message":    notification.Message,
+			"target_id":  notification.TargetID,
+			"is_read":    notification.IsRead,
+			"created_at": notification.CreatedAt.Format(time.RFC3339),
+		}
+
+		// Add sender_id if available
+		if notification.SenderID != nil {
+			wsPayload["sender_id"] = *notification.SenderID
+		}
+
+		// Add data if available
+		if notification.Data != "" {
+			var dataMap map[string]interface{}
+			if err := json.Unmarshal([]byte(notification.Data), &dataMap); err == nil {
+				wsPayload["data"] = dataMap
+			}
+		}
+
+		// Broadcast to user via WebSocket
+		s.wsHub.BroadcastToUser(userID, wsPayload)
 	}
 
 	return nil
@@ -270,4 +295,9 @@ func (s *notificationService) DeleteNotification(notificationID, userID string) 
 	}
 
 	return s.notifRepo.Delete(notificationID)
+}
+
+// DeleteByTargetIDAndType deletes notifications by target_id and type
+func (s *notificationService) DeleteByTargetIDAndType(targetID, notifType string) error {
+	return s.notifRepo.DeleteByTargetIDAndType(targetID, notifType)
 }

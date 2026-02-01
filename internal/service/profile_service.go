@@ -118,20 +118,60 @@ func (s *profileService) GetProfileByID(profileID string) (*model.Profile, error
 }
 
 // GetProfileByUserID retrieves a profile by user ID
+// Auto-creates profile if it doesn't exist
 func (s *profileService) GetProfileByUserID(userID string) (*model.Profile, error) {
+	// Check if user exists first
+	_, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+
 	profile, err := s.profileRepo.FindByUserID(userID)
 	if err != nil {
-		return nil, errors.New("profile not found")
+		// Profile doesn't exist, create a new empty profile
+		// All fields are optional and can be nil/empty
+		profile = &model.Profile{
+			UserID:          userID,
+			IsProfilePublic: true, // default to public
+			// All other fields are nil/empty by default
+		}
+
+		if err := s.profileRepo.Create(profile); err != nil {
+			return nil, fmt.Errorf("failed to create profile: %w", err)
+		}
+
+		// Reload with user relationship
+		return s.profileRepo.FindByID(profile.ID)
 	}
 
 	return profile, nil
 }
 
 // GetMyProfile retrieves the current user's profile
+// Auto-creates profile if it doesn't exist
 func (s *profileService) GetMyProfile(userID string) (*model.Profile, error) {
+	// Check if user exists first
+	_, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+
 	profile, err := s.profileRepo.FindByUserID(userID)
 	if err != nil {
-		return nil, errors.New("profile not found")
+		// Profile doesn't exist, create a new empty profile
+		// All fields are optional and can be nil/empty
+		profile = &model.Profile{
+			UserID:          userID,
+			IsProfilePublic: true, // default to public
+			// All other fields are nil/empty by default
+		}
+
+		if err := s.profileRepo.Create(profile); err != nil {
+			return nil, fmt.Errorf("failed to create profile: %w", err)
+		}
+
+		// Reload with user relationship
+		return s.profileRepo.FindByID(profile.ID)
 	}
 
 	return profile, nil

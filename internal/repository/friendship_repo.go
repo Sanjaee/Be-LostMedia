@@ -89,7 +89,16 @@ func (r *friendshipRepository) FindByID(id string) (*model.Friendship, error) {
 }
 
 // FindBySenderAndReceiver finds friendship between two users
+// This method ALWAYS bypasses cache to ensure fresh data from DB
 func (r *friendshipRepository) FindBySenderAndReceiver(senderID, receiverID string) (*model.Friendship, error) {
+	// Invalidate cache first to ensure we get fresh data
+	if r.redis != nil {
+		r.invalidateUserCache(senderID)
+		r.invalidateUserCache(receiverID)
+		// Also invalidate any potential cached friendship by checking both directions
+		// We'll invalidate after we find the friendship ID
+	}
+
 	var friendship model.Friendship
 	err := r.db.Preload("Sender").Preload("Receiver").
 		Where("(sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)",
@@ -98,6 +107,16 @@ func (r *friendshipRepository) FindBySenderAndReceiver(senderID, receiverID stri
 	if err != nil {
 		return nil, err
 	}
+
+	// Invalidate cache for this specific friendship to ensure fresh data
+	if r.redis != nil {
+		r.invalidateFriendshipCache(friendship.ID)
+		r.invalidateAcceptedCache(senderID)
+		r.invalidateAcceptedCache(receiverID)
+		r.invalidatePendingCache(senderID)
+		r.invalidatePendingCache(receiverID)
+	}
+
 	return &friendship, nil
 }
 
