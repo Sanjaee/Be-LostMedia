@@ -1,0 +1,135 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yourapp_app
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=${PORT:-5000}
+      - SERVER_HOST=${SERVER_HOST:-0.0.0.0}
+      - CLIENT_URL=${CLIENT_URL:-http://localhost:3000}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      # Database
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-yourapp_db}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password123}
+      - POSTGRES_DB=${POSTGRES_DB:-yourapp}
+      - POSTGRES_SSLMODE=disable
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-yourapp_db}:${POSTGRES_PASSWORD:-password123}@db:5432/${POSTGRES_DB:-yourapp}?sslmode=disable
+      # JWT
+      - JWT_SECRET=${JWT_SECRET:-D8D3DA7A75F61ACD5A4CD579EDBBC}
+      # Google OAuth
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      # RabbitMQ
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-yourapp}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-password123}
+      # Email
+      - EMAIL_FROM=${EMAIL_FROM:-gamingafriza005@gmail.com}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - EMAIL_NAME=${EMAIL_NAME:-Zacode}
+      - SMTP_USERNAME=${SMTP_USERNAME:-gamingafriza005@gmail.com}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-prcypthkwnplsuzv}
+      # Rate Limiting
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+      - RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-100}
+      - RATE_LIMIT_BURST=${RATE_LIMIT_BURST:-200}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    container_name: yourapp_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yourapp_db}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password123}
+      POSTGRES_DB: ${POSTGRES_DB:-yourapp}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - yourapp_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yourapp_db -d yourapp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: yourapp_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - yourapp_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: yourapp_rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-yourapp}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-password123}
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - yourapp_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgweb:
+    image: sosedoff/pgweb:latest
+    container_name: yourapp_pgweb
+    ports:
+      - "8081:8081"
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-yourapp_db}:${POSTGRES_PASSWORD:-password123}@db:5432/${POSTGRES_DB:-yourapp}?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  yourapp_network:
+    driver: bridge
