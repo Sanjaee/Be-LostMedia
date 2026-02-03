@@ -19,13 +19,13 @@ type Comment struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relationships
-	Post      Post     `gorm:"foreignKey:PostID;references:ID" json:"post,omitempty"`
-	User      User     `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
-	Parent    *Comment `gorm:"foreignKey:ParentID;references:ID" json:"parent,omitempty"`
-	Replies   []Comment `gorm:"foreignKey:ParentID;references:ID" json:"replies,omitempty"`
+	Post    Post      `gorm:"foreignKey:PostID;references:ID" json:"post,omitempty"`
+	User    User      `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
+	Parent  *Comment  `gorm:"foreignKey:ParentID;references:ID" json:"parent,omitempty"`
+	Replies []Comment `gorm:"foreignKey:ParentID;references:ID" json:"replies,omitempty"`
 	// Likes relationship is polymorphic (target_type + target_id), so we don't use foreign key constraint
 	// Likes are accessed via service layer using TargetID and TargetType
-	LikeCount int64    `gorm:"-" json:"like_count"` // Virtual field, calculated
+	LikeCount int64 `gorm:"-" json:"like_count"` // Virtual field, calculated
 }
 
 // BeforeCreate hook to generate UUID
