@@ -42,8 +42,17 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		panic("Failed to connect to database: " + err.Error())
 	}
 
+	// Fix incorrect foreign key constraint for polymorphic likes table
+	// This constraint was incorrectly created by GORM for polymorphic relationship
+	if err := db.Exec("ALTER TABLE likes DROP CONSTRAINT IF EXISTS fk_comments_likes").Error; err != nil {
+		log.Printf("Warning: Failed to drop fk_comments_likes constraint (may not exist): %v", err)
+	}
+	if err := db.Exec("ALTER TABLE likes DROP CONSTRAINT IF EXISTS likes_target_id_fkey").Error; err != nil {
+		log.Printf("Warning: Failed to drop likes_target_id_fkey constraint (may not exist): %v", err)
+	}
+
 	// Auto migrate
-	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.Comment{}, &model.Like{}); err != nil {
 		panic("Failed to migrate database: " + err.Error())
 	}
 
@@ -56,6 +65,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	friendshipRepo := repository.NewFriendshipRepository(db, redisClient)
 	notificationRepo := repository.NewNotificationRepository(db, redisClient)
 	postRepo := repository.NewPostRepository(db, redisClient)
+	commentRepo := repository.NewCommentRepository(db, redisClient)
+	likeRepo := repository.NewLikeRepository(db, redisClient)
 
 	// Initialize RabbitMQ with retry logic
 	rabbitMQ := initRabbitMQWithRetry(cfg)
@@ -107,18 +118,20 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	notificationService.SetWSHub(wsHub)
 	friendshipService := service.NewFriendshipService(friendshipRepo, userRepo, notificationService)
 	postService := service.NewPostService(postRepo, userRepo, friendshipRepo)
+	commentService := service.NewCommentService(commentRepo, userRepo, postRepo)
+	likeService := service.NewLikeService(likeRepo, userRepo, postRepo, commentRepo)
 
 	// Initialize notification worker if RabbitMQ is available
 	// TODO: Re-enable RabbitMQ worker later for async processing
 	/*
-	if rabbitMQ != nil {
-		notificationWorker := service.NewNotificationWorker(notificationService, rabbitMQ, wsHub)
-		if err := notificationWorker.Start(); err != nil {
-			log.Printf("Warning: Failed to start notification worker: %v", err)
-		} else {
-			log.Println("Notification worker started successfully")
+		if rabbitMQ != nil {
+			notificationWorker := service.NewNotificationWorker(notificationService, rabbitMQ, wsHub)
+			if err := notificationWorker.Start(); err != nil {
+				log.Printf("Warning: Failed to start notification worker: %v", err)
+			} else {
+				log.Println("Notification worker started successfully")
+			}
 		}
-	}
 	*/
 	// For now, notifications are sent directly via WebSocket (no RabbitMQ)
 
@@ -128,6 +141,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	friendshipHandler := NewFriendshipHandler(friendshipService, cfg.JWTSecret)
 	notificationHandler := NewNotificationHandler(notificationService, cfg.JWTSecret)
 	postHandler := NewPostHandler(postService, cfg.JWTSecret)
+	commentHandler := NewCommentHandler(commentService, cfg.JWTSecret)
+	likeHandler := NewLikeHandler(likeService, cfg.JWTSecret)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -214,11 +229,19 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		posts := api.Group("/posts")
 		{
 			// Public routes (some posts can be viewed without auth)
-			posts.GET("/:id", postHandler.GetPost)
+			// IMPORTANT: More specific routes must be registered before wildcard routes
 			posts.GET("/user/:userID", postHandler.GetPostsByUserID)
 			posts.GET("/user/:userID/count", postHandler.CountPostsByUserID)
 			posts.GET("/group/:groupID", postHandler.GetPostsByGroupID)
 			posts.GET("/group/:groupID/count", postHandler.CountPostsByGroupID)
+
+			// Post comments routes (must be before /:id route to avoid conflict)
+			// Route with more segments must be registered first
+			posts.GET("/:id/comments", commentHandler.GetCommentsByPost)
+			posts.GET("/:id/comments/count", commentHandler.GetCommentCount)
+
+			// Post detail route (wildcard route - must be last)
+			posts.GET("/:id", postHandler.GetPost)
 
 			// Protected routes
 			posts.Use(authHandler.AuthMiddleware())
@@ -227,7 +250,39 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 				posts.GET("/feed", postHandler.GetFeed)
 				posts.PUT("/:id", postHandler.UpdatePost)
 				posts.DELETE("/:id", postHandler.DeletePost)
+
+				// Post likes
+				posts.POST("/:id/like", likeHandler.LikePost)
+				posts.DELETE("/:id/like", likeHandler.UnlikePost)
 			}
+		}
+
+		// Comment routes
+		comments := api.Group("/comments")
+		{
+			// Public routes
+			comments.GET("/:id", commentHandler.GetComment)
+			comments.GET("/:id/replies", commentHandler.GetReplies)
+
+			// Protected routes
+			comments.Use(authHandler.AuthMiddleware())
+			{
+				comments.POST("", commentHandler.CreateComment)
+				comments.PUT("/:id", commentHandler.UpdateComment)
+				comments.DELETE("/:id", commentHandler.DeleteComment)
+
+				// Comment likes
+				comments.POST("/:id/like", likeHandler.LikeComment)
+				comments.DELETE("/:id/like", likeHandler.UnlikeComment)
+			}
+		}
+
+		// Like routes
+		likes := api.Group("/likes")
+		{
+			// Public routes
+			likes.GET("", likeHandler.GetLikes)
+			likes.GET("/count", likeHandler.GetLikeCount)
 		}
 	}
 
