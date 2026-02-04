@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"log"
 	"time"
 	"yourapp/internal/config"
@@ -42,19 +43,15 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		panic("Failed to connect to database: " + err.Error())
 	}
 
-	// Fix incorrect foreign key constraint for polymorphic likes table
-	// This constraint was incorrectly created by GORM for polymorphic relationship
-	if err := db.Exec("ALTER TABLE likes DROP CONSTRAINT IF EXISTS fk_comments_likes").Error; err != nil {
-		log.Printf("Warning: Failed to drop fk_comments_likes constraint (may not exist): %v", err)
-	}
-	if err := db.Exec("ALTER TABLE likes DROP CONSTRAINT IF EXISTS likes_target_id_fkey").Error; err != nil {
-		log.Printf("Warning: Failed to drop likes_target_id_fkey constraint (may not exist): %v", err)
-	}
-
 	// Auto migrate
 	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.Comment{}, &model.Like{}); err != nil {
 		panic("Failed to migrate database: " + err.Error())
 	}
+
+	// Fix incorrect foreign key constraints for polymorphic likes table
+	// GORM may create incorrect foreign key constraints for polymorphic relationships
+	// We need to drop any foreign key constraints on target_id since it can reference multiple tables
+	fixLikesTableConstraints(db)
 
 	// Initialize Redis with retry logic
 	redisClient := initRedisWithRetry(cfg)
@@ -378,6 +375,60 @@ func initRedisWithRetry(cfg *config.Config) *util.RedisClient {
 	}
 
 	return nil
+}
+
+// fixLikesTableConstraints removes incorrect foreign key constraints from the likes table
+// Since likes.target_id is polymorphic (can reference posts or comments), we cannot have
+// a foreign key constraint on it. GORM may create incorrect constraints during AutoMigrate.
+func fixLikesTableConstraints(db *gorm.DB) {
+	// Query to find all foreign key constraints on the likes table
+	query := `
+		SELECT constraint_name 
+		FROM information_schema.table_constraints 
+		WHERE table_name = 'likes' 
+		AND constraint_type = 'FOREIGN KEY'
+		AND constraint_name IN (
+			SELECT constraint_name
+			FROM information_schema.key_column_usage
+			WHERE table_name = 'likes' 
+			AND column_name = 'target_id'
+		)
+	`
+
+	var constraints []struct {
+		ConstraintName string `gorm:"column:constraint_name"`
+	}
+
+	if err := db.Raw(query).Scan(&constraints).Error; err != nil {
+		log.Printf("Warning: Failed to query foreign key constraints on likes table: %v", err)
+		return
+	}
+
+	// Drop all found constraints
+	for _, constraint := range constraints {
+		dropQuery := fmt.Sprintf("ALTER TABLE likes DROP CONSTRAINT IF EXISTS %s", constraint.ConstraintName)
+		if err := db.Exec(dropQuery).Error; err != nil {
+			log.Printf("Warning: Failed to drop constraint %s: %v", constraint.ConstraintName, err)
+		} else {
+			log.Printf("Dropped incorrect foreign key constraint: %s", constraint.ConstraintName)
+		}
+	}
+
+	// Also try to drop known constraint names that might exist
+	knownConstraints := []string{
+		"fk_comments_likes",
+		"likes_target_id_fkey",
+		"fk_likes_comments",
+		"fk_likes_posts",
+	}
+
+	for _, constraintName := range knownConstraints {
+		dropQuery := fmt.Sprintf("ALTER TABLE likes DROP CONSTRAINT IF EXISTS %s", constraintName)
+		if err := db.Exec(dropQuery).Error; err != nil {
+			// Ignore errors for constraints that don't exist
+			log.Printf("Note: Constraint %s does not exist or already dropped", constraintName)
+		}
+	}
 }
 
 func corsMiddleware(clientURL string) gin.HandlerFunc {
