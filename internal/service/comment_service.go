@@ -57,8 +57,9 @@ func (s *commentService) CreateComment(userID string, req CreateCommentRequest) 
 		return nil, errors.New("user not found")
 	}
 
-	// Validate post exists
-	if _, err := s.postRepo.FindByID(req.PostID); err != nil {
+	// Validate post exists and get post owner
+	post, err := s.postRepo.FindByID(req.PostID)
+	if err != nil {
 		return nil, errors.New("post not found")
 	}
 
@@ -88,30 +89,50 @@ func (s *commentService) CreateComment(userID string, req CreateCommentRequest) 
 		return nil, errors.New("failed to create comment")
 	}
 
-	// Send notification if this is a reply (parent_id is not null)
-	// Don't send notification if user is replying to their own comment
-	if req.ParentID != nil && *req.ParentID != "" && parentComment != nil {
-		// Get sender info
-		sender, err := s.userRepo.FindByID(userID)
-		if err == nil && sender != nil {
+	// Get sender info for notifications
+	sender, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		sender = nil
+	}
+
+	// Send notifications
+	if s.notificationService != nil && sender != nil {
+		// If this is a reply (parent_id is not null)
+		if req.ParentID != nil && *req.ParentID != "" && parentComment != nil {
 			// Only send notification if replying to someone else's comment
 			if parentComment.UserID != userID {
 				// Send notification to the parent comment owner
-				if s.notificationService != nil {
-					go func() {
-						if err := s.notificationService.SendCommentReplyNotification(
-							parentComment.UserID, // receiver (parent comment owner)
-							userID,               // sender (person who replied)
-							sender.FullName,      // sender name
-							comment.ID,           // new comment ID
-							req.PostID,           // post ID
-							req.Content,          // comment content
-						); err != nil {
-							// Log error but don't fail the comment creation
-							fmt.Printf("Failed to send comment reply notification: %v\n", err)
-						}
-					}()
-				}
+				go func() {
+					if err := s.notificationService.SendCommentReplyNotification(
+						parentComment.UserID, // receiver (parent comment owner)
+						userID,               // sender (person who replied)
+						sender.FullName,      // sender name
+						comment.ID,           // new comment ID
+						req.PostID,           // post ID
+						req.Content,          // comment content
+					); err != nil {
+						// Log error but don't fail the comment creation
+						fmt.Printf("Failed to send comment reply notification: %v\n", err)
+					}
+				}()
+			}
+		} else {
+			// This is a new comment (not a reply)
+			// Send notification to post owner if comment is not from post owner
+			if post.UserID != userID {
+				go func() {
+					if err := s.notificationService.SendPostCommentNotification(
+						post.UserID,     // receiver (post owner)
+						userID,          // sender (person who commented)
+						sender.FullName, // sender name
+						comment.ID,      // new comment ID
+						req.PostID,      // post ID
+						req.Content,     // comment content
+					); err != nil {
+						// Log error but don't fail the comment creation
+						fmt.Printf("Failed to send post comment notification: %v\n", err)
+					}
+				}()
 			}
 		}
 	}

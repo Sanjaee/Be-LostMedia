@@ -17,6 +17,7 @@ type NotificationService interface {
 	SendFriendRejectedNotification(receiverID, senderID, senderName, friendshipID string) error
 	SendFriendRemovedNotification(receiverID, senderID, senderName string) error
 	SendCommentReplyNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
+	SendPostCommentNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
 	GetNotificationsByUserID(userID string, limit, offset int) ([]*model.Notification, error)
 	GetUnreadNotifications(userID string) ([]*model.Notification, error)
 	GetUnreadCount(userID string) (int64, error)
@@ -86,8 +87,8 @@ func (s *notificationService) sendNotification(
 		if senderID, ok := data["sender_id"].(string); ok {
 			notification.SenderID = &senderID
 		}
-		// For comment_reply, use comment_id as target_id
-		if notifType == model.NotificationTypeCommentReply {
+		// For comment_reply and post_comment, use comment_id as target_id
+		if notifType == model.NotificationTypeCommentReply || notifType == model.NotificationTypePostComment {
 			if commentID, ok := data["comment_id"].(string); ok {
 				notification.TargetID = &commentID
 			}
@@ -259,6 +260,35 @@ func (s *notificationService) SendCommentReplyNotification(
 	return s.sendNotification(
 		receiverID,
 		model.NotificationTypeCommentReply,
+		title,
+		message,
+		data,
+	)
+}
+
+// SendPostCommentNotification sends a post comment notification
+func (s *notificationService) SendPostCommentNotification(
+	receiverID, senderID, senderName, commentID, postID, commentContent string,
+) error {
+	// Truncate comment content if too long
+	previewContent := commentContent
+	if len(previewContent) > 100 {
+		previewContent = previewContent[:100] + "..."
+	}
+
+	title := "New Comment on Your Post"
+	message := fmt.Sprintf("%s commented on your post: %s", senderName, previewContent)
+	data := map[string]interface{}{
+		"sender_id":       senderID,
+		"sender_name":     senderName,
+		"comment_id":      commentID,
+		"post_id":         postID,
+		"comment_content": commentContent,
+	}
+
+	return s.sendNotification(
+		receiverID,
+		model.NotificationTypePostComment,
 		title,
 		message,
 		data,
