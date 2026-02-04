@@ -3,6 +3,8 @@ package app
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"time"
 	"yourapp/internal/config"
 	"yourapp/internal/middleware"
@@ -108,6 +110,27 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	go wsHub.Run()
 	log.Println("WebSocket hub started")
 
+	// Initialize tmp directory
+	if err := initTmpDir(); err != nil {
+		log.Printf("Warning: Failed to create tmp directory: %v", err)
+	} else {
+		log.Println("Tmp directory initialized successfully")
+	}
+
+	// Initialize Cloudinary client
+	var cloudinaryClient *util.CloudinaryClient
+	if cfg.CloudinaryCloudName != "" && cfg.CloudinaryAPIKey != "" && cfg.CloudinaryAPISecret != "" {
+		var err error
+		cloudinaryClient, err = util.NewCloudinaryClient(cfg)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize Cloudinary: %v. Image uploads will be disabled.", err)
+		} else {
+			log.Println("Cloudinary initialized successfully")
+		}
+	} else {
+		log.Println("Cloudinary credentials not configured. Image uploads will be disabled.")
+	}
+
 	// Initialize services
 	authService := service.NewAuthServiceWithConfig(userRepo, cfg.JWTSecret, rabbitMQ, cfg)
 	profileService := service.NewProfileService(profileRepo, userRepo)
@@ -137,7 +160,15 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	profileHandler := NewProfileHandler(profileService, cfg.JWTSecret)
 	friendshipHandler := NewFriendshipHandler(friendshipService, cfg.JWTSecret)
 	notificationHandler := NewNotificationHandler(notificationService, cfg.JWTSecret)
-	postHandler := NewPostHandler(postService, cfg.JWTSecret)
+
+	// Initialize post handler with Cloudinary if available
+	var postHandler *PostHandler
+	if cloudinaryClient != nil {
+		postHandler = NewPostHandlerWithCloudinary(postService, notificationService, cloudinaryClient, wsHub, cfg.JWTSecret)
+	} else {
+		postHandler = NewPostHandler(postService, cfg.JWTSecret)
+	}
+
 	commentHandler := NewCommentHandler(commentService, cfg.JWTSecret)
 	likeHandler := NewLikeHandler(likeService, cfg.JWTSecret)
 
@@ -244,6 +275,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			posts.Use(authHandler.AuthMiddleware())
 			{
 				posts.POST("", postHandler.CreatePost)
+				posts.POST("/upload", postHandler.CreatePostWithImages) // Async image upload
 				posts.GET("/feed", postHandler.GetFeed)
 				posts.PUT("/:id", postHandler.UpdatePost)
 				posts.DELETE("/:id", postHandler.DeletePost)
@@ -375,6 +407,19 @@ func initRedisWithRetry(cfg *config.Config) *util.RedisClient {
 	}
 
 	return nil
+}
+
+// initTmpDir initializes the tmp directory for file uploads
+func initTmpDir() error {
+	wd, err := os.Getwd()
+	if err != nil {
+		// Fallback to temp directory if can't get working directory
+		tmpDir := filepath.Join(os.TempDir(), "tmp")
+		return os.MkdirAll(tmpDir, 0755)
+	}
+
+	tmpDir := filepath.Join(wd, "tmp")
+	return os.MkdirAll(tmpDir, 0755)
 }
 
 // fixLikesTableConstraints removes incorrect foreign key constraints from the likes table

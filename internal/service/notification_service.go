@@ -18,6 +18,7 @@ type NotificationService interface {
 	SendFriendRemovedNotification(receiverID, senderID, senderName string) error
 	SendCommentReplyNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
 	SendPostCommentNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
+	SendPostUploadCompletedNotification(userID, postID string, imageCount int) error
 	GetNotificationsByUserID(userID string, limit, offset int) ([]*model.Notification, error)
 	GetUnreadNotifications(userID string) ([]*model.Notification, error)
 	GetUnreadCount(userID string) (int64, error)
@@ -91,6 +92,11 @@ func (s *notificationService) sendNotification(
 		if notifType == model.NotificationTypeCommentReply || notifType == model.NotificationTypePostComment {
 			if commentID, ok := data["comment_id"].(string); ok {
 				notification.TargetID = &commentID
+			}
+		} else if notifType == model.NotificationTypePostUploadCompleted {
+			// For post upload completed, use post_id as target_id
+			if postID, ok := data["post_id"].(string); ok {
+				notification.TargetID = &postID
 			}
 		} else {
 			// For other types, use friendship_id or target_id
@@ -289,6 +295,24 @@ func (s *notificationService) SendPostCommentNotification(
 	return s.sendNotification(
 		receiverID,
 		model.NotificationTypePostComment,
+		title,
+		message,
+		data,
+	)
+}
+
+// SendPostUploadCompletedNotification sends a post upload completed notification
+func (s *notificationService) SendPostUploadCompletedNotification(userID, postID string, imageCount int) error {
+	title := "Upload Selesai"
+	message := fmt.Sprintf("Post berhasil diupload dengan %d gambar", imageCount)
+	data := map[string]interface{}{
+		"post_id":     postID,
+		"image_count": imageCount,
+	}
+
+	return s.sendNotification(
+		userID,
+		model.NotificationTypePostUploadCompleted,
 		title,
 		message,
 		data,

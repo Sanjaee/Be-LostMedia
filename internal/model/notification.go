@@ -41,10 +41,11 @@ func (Notification) TableName() string {
 
 // Notification type constants
 const (
-	NotificationTypeFriendRequest  = "friend_request"
-	NotificationTypeFriendAccepted = "friend_accepted"
-	NotificationTypeFriendRejected = "friend_rejected"
-	NotificationTypeFriendRemoved  = "friend_removed"
-	NotificationTypeCommentReply   = "comment_reply"
-	NotificationTypePostComment    = "post_comment"
+	NotificationTypeFriendRequest       = "friend_request"
+	NotificationTypeFriendAccepted      = "friend_accepted"
+	NotificationTypeFriendRejected      = "friend_rejected"
+	NotificationTypeFriendRemoved       = "friend_removed"
+	NotificationTypeCommentReply        = "comment_reply"
+	NotificationTypePostComment         = "post_comment"
+	NotificationTypePostUploadCompleted = "post_upload_completed"
 )

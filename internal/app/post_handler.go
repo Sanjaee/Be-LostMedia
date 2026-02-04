@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -11,14 +13,37 @@ import (
 )
 
 type PostHandler struct {
-	postService service.PostService
-	jwtSecret   string
+	postService         service.PostService
+	notificationService service.NotificationService
+	cloudinaryClient    *util.CloudinaryClient
+	wsHub               interface {
+		BroadcastToUser(string, map[string]interface{})
+	}
+	jwtSecret string
 }
 
 func NewPostHandler(postService service.PostService, jwtSecret string) *PostHandler {
 	return &PostHandler{
 		postService: postService,
 		jwtSecret:   jwtSecret,
+	}
+}
+
+func NewPostHandlerWithCloudinary(
+	postService service.PostService,
+	notificationService service.NotificationService,
+	cloudinaryClient *util.CloudinaryClient,
+	wsHub interface {
+		BroadcastToUser(string, map[string]interface{})
+	},
+	jwtSecret string,
+) *PostHandler {
+	return &PostHandler{
+		postService:         postService,
+		notificationService: notificationService,
+		cloudinaryClient:    cloudinaryClient,
+		wsHub:               wsHub,
+		jwtSecret:           jwtSecret,
 	}
 }
 
@@ -287,4 +312,162 @@ func (h *PostHandler) CountPostsByGroupID(c *gin.Context) {
 	}
 
 	util.SuccessResponse(c, http.StatusOK, "Post count retrieved successfully", gin.H{"count": count})
+}
+
+// CreatePostWithImages handles post creation with image uploads (async)
+// POST /api/v1/posts/upload
+func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		util.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	// Parse multipart form
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil { // 32MB max
+		util.BadRequest(c, "Failed to parse form data")
+		return
+	}
+
+	// Get content
+	content := c.PostForm("content")
+	var contentPtr *string
+	if content != "" {
+		contentPtr = &content
+	}
+
+	// Get group_id if provided
+	groupID := c.PostForm("group_id")
+	var groupIDPtr *string
+	if groupID != "" {
+		groupIDPtr = &groupID
+	}
+
+	// Get files
+	form, err := c.MultipartForm()
+	if err != nil {
+		util.BadRequest(c, "Failed to parse multipart form")
+		return
+	}
+
+	files := form.File["images"]
+	if len(files) == 0 {
+		files = form.File["files"]
+	}
+
+	// Validate: must have either content or images
+	if (contentPtr == nil || *contentPtr == "") && len(files) == 0 {
+		util.BadRequest(c, "Post must have either content or images")
+		return
+	}
+
+	// Validate maximum 3 images
+	if len(files) > 3 {
+		util.BadRequest(c, "Maximum 3 images allowed")
+		return
+	}
+
+	// Validate file sizes (max 3MB each)
+	maxSize := int64(3 * 1024 * 1024) // 3MB
+	for _, fileHeader := range files {
+		if fileHeader.Size > maxSize {
+			util.BadRequest(c, fmt.Sprintf("File %s exceeds 3MB limit", fileHeader.Filename))
+			return
+		}
+	}
+
+	// Create post immediately with empty image URLs (will be updated async)
+	createReq := service.CreatePostRequest{
+		Content:   contentPtr,
+		ImageURLs: []string{}, // Empty initially, will be updated after processing
+		GroupID:   groupIDPtr,
+	}
+
+	post, err := h.postService.CreatePost(userID.(string), createReq)
+	if err != nil {
+		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	// If no images, return immediately
+	if len(files) == 0 {
+		util.SuccessResponse(c, http.StatusCreated, "Post created successfully", gin.H{"post": post})
+		return
+	}
+
+	// Process images in background (async)
+	go func() {
+		var fileDataList []util.FileData
+
+		// Read all files into memory
+		for _, fileHeader := range files {
+			file, err := fileHeader.Open()
+			if err != nil {
+				log.Printf("Error opening file %s: %v", fileHeader.Filename, err)
+				continue
+			}
+
+			fileData, err := util.ReadFileFromReader(file, fileHeader.Filename)
+			file.Close()
+			if err != nil {
+				log.Printf("Error reading file %s: %v", fileHeader.Filename, err)
+				continue
+			}
+
+			fileDataList = append(fileDataList, *fileData)
+		}
+
+		if len(fileDataList) == 0 {
+			log.Printf("No valid files processed for post %s", post.ID)
+			return
+		}
+
+		// Process and upload images
+		imageURLs, err := h.cloudinaryClient.ProcessMultipleFiles(fileDataList)
+		if err != nil {
+			log.Printf("Error processing images for post %s: %v", post.ID, err)
+			return
+		}
+
+		// Update post with image URLs
+		updateReq := service.UpdatePostRequest{
+			ImageURLs: imageURLs,
+		}
+
+		updatedPost, err := h.postService.UpdatePost(userID.(string), post.ID, updateReq)
+		if err != nil {
+			log.Printf("Error updating post %s with image URLs: %v", post.ID, err)
+			return
+		}
+
+		log.Printf("Post %s processing completed with %d images", post.ID, len(imageURLs))
+
+		// Send notification to user that upload is completed (saves to DB and sends via WebSocket)
+		if h.notificationService != nil {
+			if err := h.notificationService.SendPostUploadCompletedNotification(userID.(string), updatedPost.ID, len(imageURLs)); err != nil {
+				log.Printf("Error sending post upload completed notification: %v", err)
+			}
+		}
+
+		log.Printf("Post %s is ready with images", updatedPost.ID)
+	}()
+
+	// Send initial WebSocket notification that upload is pending
+	if h.wsHub != nil {
+		h.wsHub.BroadcastToUser(userID.(string), map[string]interface{}{
+			"type":    "post_upload_pending",
+			"post_id": post.ID,
+			"message": "Post sedang diproses, gambar sedang diupload...",
+			"status":  "pending",
+			"data": map[string]interface{}{
+				"post_id": post.ID,
+			},
+		})
+	}
+
+	// Return response immediately (ASYNC)
+	util.SuccessResponse(c, http.StatusAccepted, "Post created and images are being processed", gin.H{
+		"post":   post,
+		"status": "processing",
+	})
 }

@@ -52,6 +52,12 @@ type Config struct {
 	RateLimitEnabled bool
 	RateLimitRPS     int // Requests per second
 	RateLimitBurst   int // Burst size
+
+	// Cloudinary
+	CloudinaryCloudName string
+	CloudinaryAPIKey    string
+	CloudinaryAPISecret string
+	CloudinaryFolder    string
 }
 
 func Load() (*Config, error) {
@@ -103,6 +109,12 @@ func Load() (*Config, error) {
 		RateLimitEnabled: getEnvBool("RATE_LIMIT_ENABLED", true),
 		RateLimitRPS:     getEnvInt("RATE_LIMIT_RPS", 100),
 		RateLimitBurst:   getEnvInt("RATE_LIMIT_BURST", 200),
+
+		// Cloudinary
+		CloudinaryCloudName: getEnv("CLOUDINARY_CLOUD_NAME", ""),
+		CloudinaryAPIKey:    getEnv("CLOUDINARY_API_KEY", ""),
+		CloudinaryAPISecret: getEnv("CLOUDINARY_API_SECRET", ""),
+		CloudinaryFolder:    getEnv("CLOUDINARY_FOLDER", "social-media"),
 	}
 
 	// Build database URL if not provided
