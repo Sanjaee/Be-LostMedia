@@ -28,8 +28,8 @@ type commentRepository struct {
 }
 
 const (
-	commentCachePrefix        = "comment:"
-	commentByPostCachePrefix  = "comment:post:"
+	commentCachePrefix         = "comment:"
+	commentByPostCachePrefix   = "comment:post:"
 	commentByParentCachePrefix = "comment:parent:"
 	commentCountCachePrefix    = "comment:count:"
 	commentCacheExpiration     = 15 * time.Minute
@@ -73,11 +73,14 @@ func (r *commentRepository) FindByID(id string) (*model.Comment, error) {
 
 	// If not in cache, get from database
 	var comment model.Comment
-	err := r.db.Preload("User").Preload("Parent").Preload("Replies.User").
+	err := r.db.Preload("User").Preload("Parent").Preload("Parent.User").
 		Where("id = ?", id).First(&comment).Error
 	if err != nil {
 		return nil, err
 	}
+
+	// Load replies recursively
+	r.loadRepliesRecursive(&comment)
 
 	// Cache the result
 	if r.redis != nil {
@@ -87,7 +90,7 @@ func (r *commentRepository) FindByID(id string) (*model.Comment, error) {
 	return &comment, nil
 }
 
-// FindByPostID finds comments by post ID
+// FindByPostID finds comments by post ID with all nested replies
 func (r *commentRepository) FindByPostID(postID string, limit, offset int) ([]*model.Comment, error) {
 	// Try cache first
 	cacheKey := fmt.Sprintf("%s%s:%d:%d", commentByPostCachePrefix, postID, limit, offset)
@@ -98,9 +101,9 @@ func (r *commentRepository) FindByPostID(postID string, limit, offset int) ([]*m
 		}
 	}
 
-	// If not in cache, get from database (only top-level comments, not replies)
+	// Get top-level comments only (parent_id IS NULL)
 	var comments []*model.Comment
-	err := r.db.Preload("User").Preload("Replies.User").
+	err := r.db.Preload("User").
 		Where("post_id = ? AND parent_id IS NULL", postID).
 		Order("created_at DESC").
 		Limit(limit).Offset(offset).
@@ -109,13 +112,10 @@ func (r *commentRepository) FindByPostID(postID string, limit, offset int) ([]*m
 		return nil, err
 	}
 
-	// Load like counts for each comment
+	// Load nested replies recursively for each top-level comment
 	for i := range comments {
-		var likeCount int64
-		r.db.Model(&model.Like{}).
-			Where("target_type = ? AND target_id = ?", model.TargetTypeComment, comments[i].ID).
-			Count(&likeCount)
-		comments[i].LikeCount = likeCount
+		r.loadRepliesRecursive(comments[i])
+		r.loadLikeCountRecursive(comments[i])
 	}
 
 	// Cache the result
@@ -124,6 +124,43 @@ func (r *commentRepository) FindByPostID(postID string, limit, offset int) ([]*m
 	}
 
 	return comments, nil
+}
+
+// loadRepliesRecursive loads all nested replies for a comment recursively
+func (r *commentRepository) loadRepliesRecursive(comment *model.Comment) {
+	var replies []model.Comment
+	err := r.db.Preload("User").
+		Preload("Parent").
+		Preload("Parent.User").
+		Where("parent_id = ?", comment.ID).
+		Order("created_at ASC").
+		Find(&replies).Error
+	
+	if err != nil || len(replies) == 0 {
+		return
+	}
+
+	// Recursively load replies for each reply
+	for i := range replies {
+		r.loadRepliesRecursive(&replies[i])
+	}
+
+	comment.Replies = replies
+}
+
+// loadLikeCountRecursive loads like counts for comment and all nested replies
+func (r *commentRepository) loadLikeCountRecursive(comment *model.Comment) {
+	// Load like count for this comment
+	var likeCount int64
+	r.db.Model(&model.Like{}).
+		Where("target_type = ? AND target_id = ?", model.TargetTypeComment, comment.ID).
+		Count(&likeCount)
+	comment.LikeCount = likeCount
+
+	// Recursively load like counts for all replies
+	for i := range comment.Replies {
+		r.loadLikeCountRecursive(&comment.Replies[i])
+	}
 }
 
 // FindByParentID finds replies to a comment
@@ -140,6 +177,8 @@ func (r *commentRepository) FindByParentID(parentID string, limit, offset int) (
 	// If not in cache, get from database
 	var comments []*model.Comment
 	err := r.db.Preload("User").
+		Preload("Parent").
+		Preload("Parent.User").
 		Where("parent_id = ?", parentID).
 		Order("created_at ASC").
 		Limit(limit).Offset(offset).
@@ -148,13 +187,10 @@ func (r *commentRepository) FindByParentID(parentID string, limit, offset int) (
 		return nil, err
 	}
 
-	// Load like counts for each comment
+	// Load nested replies and like counts for each comment
 	for i := range comments {
-		var likeCount int64
-		r.db.Model(&model.Like{}).
-			Where("target_type = ? AND target_id = ?", model.TargetTypeComment, comments[i].ID).
-			Count(&likeCount)
-		comments[i].LikeCount = likeCount
+		r.loadRepliesRecursive(comments[i])
+		r.loadLikeCountRecursive(comments[i])
 	}
 
 	// Cache the result
