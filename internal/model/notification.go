@@ -45,4 +45,5 @@ const (
 	NotificationTypeFriendAccepted = "friend_accepted"
 	NotificationTypeFriendRejected = "friend_rejected"
 	NotificationTypeFriendRemoved  = "friend_removed"
+	NotificationTypeCommentReply  = "comment_reply"
 )

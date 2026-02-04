@@ -115,7 +115,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	notificationService.SetWSHub(wsHub)
 	friendshipService := service.NewFriendshipService(friendshipRepo, userRepo, notificationService)
 	postService := service.NewPostService(postRepo, userRepo, friendshipRepo)
-	commentService := service.NewCommentService(commentRepo, userRepo, postRepo)
+	commentService := service.NewCommentService(commentRepo, userRepo, postRepo, notificationService)
 	likeService := service.NewLikeService(likeRepo, userRepo, postRepo, commentRepo)
 
 	// Initialize notification worker if RabbitMQ is available

@@ -16,6 +16,7 @@ type NotificationService interface {
 	SendFriendAcceptedNotification(receiverID, senderID, senderName, friendshipID string) error
 	SendFriendRejectedNotification(receiverID, senderID, senderName, friendshipID string) error
 	SendFriendRemovedNotification(receiverID, senderID, senderName string) error
+	SendCommentReplyNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
 	GetNotificationsByUserID(userID string, limit, offset int) ([]*model.Notification, error)
 	GetUnreadNotifications(userID string) ([]*model.Notification, error)
 	GetUnreadCount(userID string) (int64, error)
@@ -85,10 +86,18 @@ func (s *notificationService) sendNotification(
 		if senderID, ok := data["sender_id"].(string); ok {
 			notification.SenderID = &senderID
 		}
-		if targetID, ok := data["friendship_id"].(string); ok {
-			notification.TargetID = &targetID
-		} else if targetID, ok := data["target_id"].(string); ok {
-			notification.TargetID = &targetID
+		// For comment_reply, use comment_id as target_id
+		if notifType == model.NotificationTypeCommentReply {
+			if commentID, ok := data["comment_id"].(string); ok {
+				notification.TargetID = &commentID
+			}
+		} else {
+			// For other types, use friendship_id or target_id
+			if targetID, ok := data["friendship_id"].(string); ok {
+				notification.TargetID = &targetID
+			} else if targetID, ok := data["target_id"].(string); ok {
+				notification.TargetID = &targetID
+			}
 		}
 
 		// Convert data to JSON string if provided
@@ -221,6 +230,35 @@ func (s *notificationService) SendFriendRemovedNotification(
 	return s.sendNotification(
 		receiverID,
 		model.NotificationTypeFriendRemoved,
+		title,
+		message,
+		data,
+	)
+}
+
+// SendCommentReplyNotification sends a comment reply notification
+func (s *notificationService) SendCommentReplyNotification(
+	receiverID, senderID, senderName, commentID, postID, commentContent string,
+) error {
+	// Truncate comment content if too long
+	previewContent := commentContent
+	if len(previewContent) > 100 {
+		previewContent = previewContent[:100] + "..."
+	}
+
+	title := "New Reply to Your Comment"
+	message := fmt.Sprintf("%s replied to your comment: %s", senderName, previewContent)
+	data := map[string]interface{}{
+		"sender_id":       senderID,
+		"sender_name":     senderName,
+		"comment_id":      commentID,
+		"post_id":         postID,
+		"comment_content": commentContent,
+	}
+
+	return s.sendNotification(
+		receiverID,
+		model.NotificationTypeCommentReply,
 		title,
 		message,
 		data,

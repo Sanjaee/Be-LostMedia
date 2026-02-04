@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 
 	"yourapp/internal/model"
 	"yourapp/internal/repository"
@@ -18,9 +19,10 @@ type CommentService interface {
 }
 
 type commentService struct {
-	commentRepo repository.CommentRepository
-	userRepo    repository.UserRepository
-	postRepo    repository.PostRepository
+	commentRepo         repository.CommentRepository
+	userRepo            repository.UserRepository
+	postRepo            repository.PostRepository
+	notificationService NotificationService
 }
 
 type CreateCommentRequest struct {
@@ -38,11 +40,13 @@ func NewCommentService(
 	commentRepo repository.CommentRepository,
 	userRepo repository.UserRepository,
 	postRepo repository.PostRepository,
+	notificationService NotificationService,
 ) CommentService {
 	return &commentService{
-		commentRepo: commentRepo,
-		userRepo:    userRepo,
-		postRepo:    postRepo,
+		commentRepo:         commentRepo,
+		userRepo:            userRepo,
+		postRepo:            postRepo,
+		notificationService: notificationService,
 	}
 }
 
@@ -59,12 +63,14 @@ func (s *commentService) CreateComment(userID string, req CreateCommentRequest) 
 	}
 
 	// If parent_id is provided, validate parent comment exists and belongs to same post
+	var parentComment *model.Comment
 	if req.ParentID != nil && *req.ParentID != "" {
-		parent, err := s.commentRepo.FindByID(*req.ParentID)
+		var err error
+		parentComment, err = s.commentRepo.FindByID(*req.ParentID)
 		if err != nil {
 			return nil, errors.New("parent comment not found")
 		}
-		if parent.PostID != req.PostID {
+		if parentComment.PostID != req.PostID {
 			return nil, errors.New("parent comment does not belong to this post")
 		}
 	}
@@ -80,6 +86,34 @@ func (s *commentService) CreateComment(userID string, req CreateCommentRequest) 
 
 	if err := s.commentRepo.Create(comment); err != nil {
 		return nil, errors.New("failed to create comment")
+	}
+
+	// Send notification if this is a reply (parent_id is not null)
+	// Don't send notification if user is replying to their own comment
+	if req.ParentID != nil && *req.ParentID != "" && parentComment != nil {
+		// Get sender info
+		sender, err := s.userRepo.FindByID(userID)
+		if err == nil && sender != nil {
+			// Only send notification if replying to someone else's comment
+			if parentComment.UserID != userID {
+				// Send notification to the parent comment owner
+				if s.notificationService != nil {
+					go func() {
+						if err := s.notificationService.SendCommentReplyNotification(
+							parentComment.UserID, // receiver (parent comment owner)
+							userID,               // sender (person who replied)
+							sender.FullName,      // sender name
+							comment.ID,           // new comment ID
+							req.PostID,           // post ID
+							req.Content,          // comment content
+						); err != nil {
+							// Log error but don't fail the comment creation
+							fmt.Printf("Failed to send comment reply notification: %v\n", err)
+						}
+					}()
+				}
+			}
+		}
 	}
 
 	// Reload with relationships
