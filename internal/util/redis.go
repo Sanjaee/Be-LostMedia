@@ -102,3 +102,36 @@ func (r *RedisClient) Close() error {
 func (r *RedisClient) GetClient() *redis.Client {
 	return r.client
 }
+
+// ZAdd adds a member with score to a sorted set
+func (r *RedisClient) ZAdd(key string, score float64, member string) error {
+	return r.client.ZAdd(r.ctx, key, redis.Z{
+		Score:  score,
+		Member: member,
+	}).Err()
+}
+
+// ZRange returns members of a sorted set by rank
+func (r *RedisClient) ZRange(key string, start, stop int64) ([]string, error) {
+	return r.client.ZRange(r.ctx, key, start, stop).Result()
+}
+
+// ZRevRange returns members of a sorted set by rank (descending)
+func (r *RedisClient) ZRevRange(key string, start, stop int64) ([]string, error) {
+	return r.client.ZRevRange(r.ctx, key, start, stop).Result()
+}
+
+// ZScore returns the score of a member in a sorted set
+func (r *RedisClient) ZScore(key string, member string) (float64, error) {
+	return r.client.ZScore(r.ctx, key, member).Result()
+}
+
+// ZRem removes a member from a sorted set
+func (r *RedisClient) ZRem(key string, member string) error {
+	return r.client.ZRem(r.ctx, key, member).Err()
+}
+
+// ZIncrBy increments the score of a member in a sorted set
+func (r *RedisClient) ZIncrBy(key string, increment float64, member string) error {
+	return r.client.ZIncrBy(r.ctx, key, increment, member).Err()
+}

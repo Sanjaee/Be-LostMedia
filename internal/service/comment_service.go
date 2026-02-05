@@ -89,6 +89,9 @@ func (s *commentService) CreateComment(userID string, req CreateCommentRequest) 
 		return nil, errors.New("failed to create comment")
 	}
 
+	// Update engagement score in Redis
+	s.postRepo.UpdatePostEngagementScore(req.PostID)
+
 	// Get sender info for notifications
 	sender, err := s.userRepo.FindByID(userID)
 	if err != nil {
@@ -234,6 +237,9 @@ func (s *commentService) DeleteComment(userID, commentID string) error {
 	if err := s.commentRepo.Delete(commentID); err != nil {
 		return errors.New("failed to delete comment")
 	}
+
+	// Update engagement score in Redis
+	s.postRepo.UpdatePostEngagementScore(comment.PostID)
 
 	return nil
 }

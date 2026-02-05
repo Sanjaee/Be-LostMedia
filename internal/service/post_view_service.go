@@ -62,6 +62,11 @@ func (s *postViewService) TrackView(userID, postID string) error {
 		return fmt.Errorf("failed to track view: %w", err)
 	}
 
+	// Update engagement score in Redis (only if new view, not duplicate)
+	if existingView == nil {
+		s.postRepo.UpdatePostEngagementScore(postID)
+	}
+
 	return nil
 }
 

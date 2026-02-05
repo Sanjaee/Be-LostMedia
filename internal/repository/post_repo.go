@@ -1,13 +1,17 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"sort"
 	"time"
 
 	"yourapp/internal/model"
 	"yourapp/internal/util"
 
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -16,12 +20,13 @@ type PostRepository interface {
 	FindByID(id string) (*model.Post, error)
 	FindByUserID(userID string, limit, offset int) ([]*model.Post, error)
 	FindByGroupID(groupID string, limit, offset int) ([]*model.Post, error)
-	FindFeed(userID string, limit, offset int) ([]*model.Post, error) // Feed for user (friends' posts + own posts)
+	FindFeed(userID string, limit, offset int) ([]*model.Post, error)             // Feed for user (friends' posts + own posts)
 	FindFeedByEngagement(userID string, limit, offset int) ([]*model.Post, error) // Feed sorted by engagement (likes + comments + views)
 	Update(post *model.Post) error
 	Delete(id string) error
 	CountByUserID(userID string) (int64, error)
 	CountByGroupID(groupID string) (int64, error)
+	UpdatePostEngagementScore(postID string) // Update engagement score in Redis
 }
 
 type postRepository struct {
@@ -30,12 +35,15 @@ type postRepository struct {
 }
 
 const (
-	postCachePrefix        = "post:"
-	postByUserCachePrefix  = "post:user:"
-	postByGroupCachePrefix = "post:group:"
-	postFeedCachePrefix    = "post:feed:"
-	postCountCachePrefix   = "post:count:"
-	postCacheExpiration    = 15 * time.Minute
+	postCachePrefix               = "post:"
+	postByUserCachePrefix         = "post:user:"
+	postByGroupCachePrefix        = "post:group:"
+	postFeedCachePrefix           = "post:feed:"
+	postCountCachePrefix          = "post:count:"
+	postEngagementScorePrefix     = "post:engagement:score:" // Individual post engagement score
+	postEngagementSortedSetKey    = "post:engagement:sorted" // Sorted set of all posts by engagement
+	postCacheExpiration           = 15 * time.Minute
+	postEngagementCacheExpiration = 30 * time.Minute // Longer cache for engagement scores
 )
 
 func NewPostRepository(db *gorm.DB, redis *util.RedisClient) PostRepository {
@@ -61,6 +69,12 @@ func (r *postRepository) Create(post *model.Post) error {
 		r.invalidateCountCache(post.UserID)
 		if post.GroupID != nil {
 			r.invalidateGroupCountCache(*post.GroupID)
+		}
+		// Add to engagement sorted set with initial score 0 (only for non-group posts)
+		if post.GroupID == nil {
+			tieBreakScore := float64(post.CreatedAt.Unix()) / 1000000.0
+			r.redis.ZAdd(postEngagementSortedSetKey, tieBreakScore, post.ID)
+			r.redis.Set(postEngagementScorePrefix+post.ID, "0", postEngagementCacheExpiration)
 		}
 	}
 
@@ -188,6 +202,7 @@ func (r *postRepository) FindFeed(userID string, limit, offset int) ([]*model.Po
 }
 
 // FindFeedByEngagement finds feed posts sorted by engagement score (likes + comments + views)
+// Uses Redis sorted set for fast sorting
 func (r *postRepository) FindFeedByEngagement(userID string, limit, offset int) ([]*model.Post, error) {
 	// Try to get from cache first
 	cacheKey := fmt.Sprintf("%s%s:engagement:%d:%d", postFeedCachePrefix, userID, limit, offset)
@@ -198,81 +213,120 @@ func (r *postRepository) FindFeedByEngagement(userID string, limit, offset int) 
 		}
 	}
 
-	// Get all posts first
+	// Try to get sorted post IDs from Redis sorted set
+	var postIDs []string
+	if r.redis != nil {
+		// Get post IDs sorted by engagement score (descending)
+		ids, err := r.redis.ZRevRange(postEngagementSortedSetKey, int64(offset), int64(offset+limit-1))
+		if err == nil && len(ids) > 0 {
+			postIDs = ids
+		}
+	}
+
+	// If Redis sorted set is empty or not available, build it
+	if len(postIDs) == 0 {
+		// Get all posts first
+		var allPosts []*model.Post
+		err := r.db.Preload("User").Preload("Group").Preload("SharedPost").
+			Preload("Tags.TaggedUser").Preload("Location").
+			Where("group_id IS NULL").
+			Find(&allPosts).Error
+		if err != nil {
+			return nil, err
+		}
+
+		// Calculate and cache engagement scores
+		if r.redis != nil {
+			// Use pipeline for batch operations
+			ctx := context.Background()
+			pipe := r.redis.GetClient().Pipeline()
+
+			for _, post := range allPosts {
+				// Try to get cached engagement score first
+				scoreKey := postEngagementScorePrefix + post.ID
+				cachedScore, err := r.redis.Get(scoreKey)
+				var score float64
+
+				if err != nil {
+					// Calculate engagement score (MUST calculate before returning)
+					var likeCount, commentCount, viewCount int64
+
+					// Get counts - these queries MUST complete before we return
+					r.db.Model(&model.Like{}).
+						Where("target_type = ? AND target_id = ?", "post", post.ID).
+						Count(&likeCount)
+					r.db.Model(&model.Comment{}).
+						Where("post_id = ?", post.ID).
+						Count(&commentCount)
+					r.db.Model(&model.PostView{}).
+						Where("post_id = ?", post.ID).
+						Count(&viewCount)
+
+					// Calculate engagement score
+					// Weight: likes = 2, comments = 3, views = 1
+					score = float64((likeCount * 2) + (commentCount * 3) + (viewCount * 1))
+
+					// Cache the score
+					pipe.Set(ctx, scoreKey, fmt.Sprintf("%.0f", score), postEngagementCacheExpiration)
+				} else {
+					// Parse cached score
+					fmt.Sscanf(cachedScore, "%f", &score)
+				}
+
+				// Add to sorted set with score
+				// Use negative timestamp for tie-breaking (newer posts have higher priority)
+				tieBreakScore := float64(post.CreatedAt.Unix()) / 1000000.0 // Normalize to small value
+				finalScore := score*1000000.0 + tieBreakScore               // Multiply by large number to prioritize engagement
+				pipe.ZAdd(ctx, postEngagementSortedSetKey, redis.Z{
+					Score:  finalScore,
+					Member: post.ID,
+				})
+			}
+
+			// Set expiration for sorted set
+			pipe.Expire(ctx, postEngagementSortedSetKey, postEngagementCacheExpiration)
+
+			// Execute pipeline - MUST wait for completion before returning
+			_, err = pipe.Exec(ctx)
+			if err != nil {
+				// If Redis fails, fall back to database (which also calculates scores)
+				log.Printf("Redis pipeline error: %v, falling back to DB", err)
+			} else {
+				// Get sorted post IDs from Redis (after scores are calculated)
+				ids, err := r.redis.ZRevRange(postEngagementSortedSetKey, int64(offset), int64(offset+limit-1))
+				if err == nil && len(ids) > 0 {
+					postIDs = ids
+				}
+			}
+		}
+
+		// If still no post IDs, fall back to in-memory sorting
+		if len(postIDs) == 0 {
+			return r.findFeedByEngagementFallback(allPosts, limit, offset)
+		}
+	}
+
+	// Load posts by IDs from database
 	var posts []*model.Post
 	err := r.db.Preload("User").Preload("Group").Preload("SharedPost").
 		Preload("Tags.TaggedUser").Preload("Location").
-		Where("group_id IS NULL").
+		Where("id IN ? AND group_id IS NULL", postIDs).
 		Find(&posts).Error
 	if err != nil {
 		return nil, err
 	}
 
-	// Calculate engagement score for each post
-	type PostWithScore struct {
-		Post  *model.Post
-		Score int64
-	}
-	
-	postsWithScore := make([]PostWithScore, 0, len(posts))
-	
+	// Sort posts to match the order from Redis
+	postMap := make(map[string]*model.Post)
 	for _, post := range posts {
-		// Get like count
-		var likeCount int64
-		r.db.Model(&model.Like{}).
-			Where("target_type = ? AND target_id = ?", "post", post.ID).
-			Count(&likeCount)
-		
-		// Get comment count
-		var commentCount int64
-		r.db.Model(&model.Comment{}).
-			Where("post_id = ?", post.ID).
-			Count(&commentCount)
-		
-		// Get view count
-		var viewCount int64
-		r.db.Model(&model.PostView{}).
-			Where("post_id = ?", post.ID).
-			Count(&viewCount)
-		
-		// Calculate engagement score
-		// Weight: likes = 2, comments = 3, views = 1
-		score := (likeCount * 2) + (commentCount * 3) + (viewCount * 1)
-		
-		postsWithScore = append(postsWithScore, PostWithScore{
-			Post:  post,
-			Score: score,
-		})
+		postMap[post.ID] = post
 	}
-	
-	// Sort by score descending, then by created_at descending for tie-breaking
-	// Simple bubble sort (can be optimized later)
-	for i := 0; i < len(postsWithScore)-1; i++ {
-		for j := i + 1; j < len(postsWithScore); j++ {
-			if postsWithScore[i].Score < postsWithScore[j].Score {
-				postsWithScore[i], postsWithScore[j] = postsWithScore[j], postsWithScore[i]
-			} else if postsWithScore[i].Score == postsWithScore[j].Score {
-				// Tie-break: newest first
-				if postsWithScore[i].Post.CreatedAt.Before(postsWithScore[j].Post.CreatedAt) {
-					postsWithScore[i], postsWithScore[j] = postsWithScore[j], postsWithScore[i]
-				}
-			}
+
+	result := make([]*model.Post, 0, len(postIDs))
+	for _, id := range postIDs {
+		if post, ok := postMap[id]; ok {
+			result = append(result, post)
 		}
-	}
-	
-	// Extract posts and apply pagination
-	result := make([]*model.Post, 0, limit)
-	start := offset
-	end := offset + limit
-	if start > len(postsWithScore) {
-		return []*model.Post{}, nil
-	}
-	if end > len(postsWithScore) {
-		end = len(postsWithScore)
-	}
-	
-	for i := start; i < end; i++ {
-		result = append(result, postsWithScore[i].Post)
 	}
 
 	// Cache the result
@@ -283,34 +337,131 @@ func (r *postRepository) FindFeedByEngagement(userID string, limit, offset int) 
 	return result, nil
 }
 
-// Update updates a post and invalidates cache
+// findFeedByEngagementFallback is fallback method when Redis is not available
+func (r *postRepository) findFeedByEngagementFallback(posts []*model.Post, limit, offset int) ([]*model.Post, error) {
+	type PostWithScore struct {
+		Post  *model.Post
+		Score int64
+	}
+
+	postsWithScore := make([]PostWithScore, 0, len(posts))
+
+	for _, post := range posts {
+		var likeCount, commentCount, viewCount int64
+
+		r.db.Model(&model.Like{}).
+			Where("target_type = ? AND target_id = ?", "post", post.ID).
+			Count(&likeCount)
+		r.db.Model(&model.Comment{}).
+			Where("post_id = ?", post.ID).
+			Count(&commentCount)
+		r.db.Model(&model.PostView{}).
+			Where("post_id = ?", post.ID).
+			Count(&viewCount)
+
+		score := (likeCount * 2) + (commentCount * 3) + (viewCount * 1)
+
+		postsWithScore = append(postsWithScore, PostWithScore{
+			Post:  post,
+			Score: score,
+		})
+	}
+
+	// Use sort.Slice for better performance
+	sort.Slice(postsWithScore, func(i, j int) bool {
+		if postsWithScore[i].Score != postsWithScore[j].Score {
+			return postsWithScore[i].Score > postsWithScore[j].Score
+		}
+		return postsWithScore[i].Post.CreatedAt.After(postsWithScore[j].Post.CreatedAt)
+	})
+
+	result := make([]*model.Post, 0, limit)
+	start := offset
+	end := offset + limit
+	if start > len(postsWithScore) {
+		return []*model.Post{}, nil
+	}
+	if end > len(postsWithScore) {
+		end = len(postsWithScore)
+	}
+
+	for i := start; i < end; i++ {
+		result = append(result, postsWithScore[i].Post)
+	}
+
+	return result, nil
+}
+
+// UpdatePostEngagementScore updates the engagement score for a post in Redis
+// This is called when likes, comments, or views change
+func (r *postRepository) UpdatePostEngagementScore(postID string) {
+	if r.redis == nil {
+		return
+	}
+
+	// Get current counts
+	var likeCount, commentCount, viewCount int64
+	r.db.Model(&model.Like{}).
+		Where("target_type = ? AND target_id = ?", "post", postID).
+		Count(&likeCount)
+	r.db.Model(&model.Comment{}).
+		Where("post_id = ?", postID).
+		Count(&commentCount)
+	r.db.Model(&model.PostView{}).
+		Where("post_id = ?", postID).
+		Count(&viewCount)
+
+	// Calculate engagement score
+	score := float64((likeCount * 2) + (commentCount * 3) + (viewCount * 1))
+
+	// Get post for created_at
+	var post model.Post
+	if err := r.db.Where("id = ?", postID).First(&post).Error; err != nil {
+		return
+	}
+
+	// Update cached score
+	scoreKey := postEngagementScorePrefix + postID
+	r.redis.Set(scoreKey, fmt.Sprintf("%.0f", score), postEngagementCacheExpiration)
+
+	// Update sorted set
+	tieBreakScore := float64(post.CreatedAt.Unix()) / 1000000.0
+	finalScore := score*1000000.0 + tieBreakScore
+	r.redis.ZAdd(postEngagementSortedSetKey, finalScore, postID)
+}
+
+// Update updates a post and updates cache instead of invalidating
 func (r *postRepository) Update(post *model.Post) error {
 	if err := r.db.Save(post).Error; err != nil {
 		return err
 	}
 
-	// Invalidate caches
+	// Update caches instead of invalidating (keeps cache warm)
 	if r.redis != nil {
-		r.invalidatePostCache(post.ID)
-		r.invalidateUserCache(post.UserID)
-		if post.GroupID != nil {
-			r.invalidateGroupCache(*post.GroupID)
+		// Update post cache
+		r.cachePost(post)
+
+		// Update engagement score if needed (content change doesn't affect engagement, but we keep it fresh)
+		// Only update if post is in sorted set (non-group posts)
+		if post.GroupID == nil {
+			r.UpdatePostEngagementScore(post.ID)
 		}
-		r.invalidateFeedCache(post.UserID)
+
+		// Note: We don't invalidate feed/user caches to keep them warm
+		// The feed will be updated naturally through engagement score updates
 	}
 
 	return nil
 }
 
-// Delete deletes a post and invalidates cache
+// Delete deletes a post and removes from cache (only remove from sorted set, keep other caches)
 func (r *postRepository) Delete(id string) error {
-	// Get post first for cache invalidation
+	// Get post first for cache operations
 	var post model.Post
 	if err := r.db.Where("id = ?", id).First(&post).Error; err != nil {
 		return err
 	}
 
-	userID := post.UserID
 	groupID := post.GroupID
 
 	// Delete from database (soft delete)
@@ -318,18 +469,20 @@ func (r *postRepository) Delete(id string) error {
 		return err
 	}
 
-	// Invalidate caches
+	// Update caches instead of invalidating (keep cache warm)
 	if r.redis != nil {
-		r.invalidatePostCache(id)
-		r.invalidateUserCache(userID)
-		if groupID != nil {
-			r.invalidateGroupCache(*groupID)
+		// Remove post from individual cache
+		r.redis.Delete(postCachePrefix + id)
+
+		// Remove from engagement sorted set (only for non-group posts)
+		if groupID == nil {
+			r.redis.ZRem(postEngagementSortedSetKey, id)
+			r.redis.Delete(postEngagementScorePrefix + id)
 		}
-		r.invalidateFeedCache(userID)
-		r.invalidateCountCache(userID)
-		if groupID != nil {
-			r.invalidateGroupCountCache(*groupID)
-		}
+
+		// Note: We don't invalidate feed/user caches to keep them warm
+		// The feed will naturally exclude deleted posts on next fetch
+		// Count caches will be updated on next count operation
 	}
 
 	return nil

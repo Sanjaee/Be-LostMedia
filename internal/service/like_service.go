@@ -18,9 +18,9 @@ type LikeService interface {
 }
 
 type likeService struct {
-	likeRepo   repository.LikeRepository
-	userRepo   repository.UserRepository
-	postRepo   repository.PostRepository
+	likeRepo    repository.LikeRepository
+	userRepo    repository.UserRepository
+	postRepo    repository.PostRepository
 	commentRepo repository.CommentRepository
 }
 
@@ -82,6 +82,9 @@ func (s *likeService) LikePost(userID, postID string, reaction string) (*model.L
 	if err := s.likeRepo.Create(like); err != nil {
 		return nil, errors.New("failed to like post")
 	}
+
+	// Update engagement score in Redis
+	s.postRepo.UpdatePostEngagementScore(postID)
 
 	return like, nil
 }
@@ -146,6 +149,9 @@ func (s *likeService) UnlikePost(userID, postID string) error {
 	if err := s.likeRepo.Delete(like.ID); err != nil {
 		return errors.New("failed to unlike post")
 	}
+
+	// Update engagement score in Redis
+	s.postRepo.UpdatePostEngagementScore(postID)
 
 	return nil
 }

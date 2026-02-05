@@ -201,7 +201,7 @@ func (h *PostHandler) GetFeed(c *gin.Context) {
 	// Get pagination parameters
 	limitStr := c.DefaultQuery("limit", "20")
 	offsetStr := c.DefaultQuery("offset", "0")
-	sortBy := c.DefaultQuery("sort", "newest") // newest or popular
+	sortBy := c.DefaultQuery("sort", "popular") // newest or popular (default: popular)
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit < 1 {
@@ -222,7 +222,7 @@ func (h *PostHandler) GetFeed(c *gin.Context) {
 	} else {
 		posts, err = h.postService.GetFeed(userID.(string), limit, offset)
 	}
-	
+
 	if err != nil {
 		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
 		return
