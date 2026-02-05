@@ -14,6 +14,7 @@ import (
 
 type PostHandler struct {
 	postService         service.PostService
+	postViewService     service.PostViewService
 	notificationService service.NotificationService
 	cloudinaryClient    *util.CloudinaryClient
 	wsHub               interface {
@@ -31,6 +32,7 @@ func NewPostHandler(postService service.PostService, jwtSecret string) *PostHand
 
 func NewPostHandlerWithCloudinary(
 	postService service.PostService,
+	postViewService service.PostViewService,
 	notificationService service.NotificationService,
 	cloudinaryClient *util.CloudinaryClient,
 	wsHub interface {
@@ -40,6 +42,7 @@ func NewPostHandlerWithCloudinary(
 ) *PostHandler {
 	return &PostHandler{
 		postService:         postService,
+		postViewService:     postViewService,
 		notificationService: notificationService,
 		cloudinaryClient:    cloudinaryClient,
 		wsHub:               wsHub,
@@ -470,4 +473,46 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 		"post":   post,
 		"status": "processing",
 	})
+}
+
+// TrackView handles tracking a post view
+// POST /api/v1/posts/:id/view
+func (h *PostHandler) TrackView(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		util.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	postID := c.Param("id")
+	if postID == "" {
+		util.BadRequest(c, "Post ID is required")
+		return
+	}
+
+	err := h.postViewService.TrackView(userID.(string), postID)
+	if err != nil {
+		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "View tracked successfully", nil)
+}
+
+// GetViewCount handles getting view count for a post
+// GET /api/v1/posts/:id/views/count
+func (h *PostHandler) GetViewCount(c *gin.Context) {
+	postID := c.Param("id")
+	if postID == "" {
+		util.BadRequest(c, "Post ID is required")
+		return
+	}
+
+	count, err := h.postViewService.GetViewCount(postID)
+	if err != nil {
+		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "View count retrieved successfully", gin.H{"count": count})
 }

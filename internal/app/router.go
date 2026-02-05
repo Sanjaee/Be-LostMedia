@@ -46,7 +46,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	}
 
 	// Auto migrate
-	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.Comment{}, &model.Like{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.Comment{}, &model.Like{}, &model.PostView{}); err != nil {
 		panic("Failed to migrate database: " + err.Error())
 	}
 
@@ -138,6 +138,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	notificationService.SetWSHub(wsHub)
 	friendshipService := service.NewFriendshipService(friendshipRepo, userRepo, notificationService)
 	postService := service.NewPostService(postRepo, userRepo, friendshipRepo)
+	postViewRepo := repository.NewPostViewRepository(db, redisClient)
+	postViewService := service.NewPostViewService(postViewRepo, postRepo, userRepo)
 	commentService := service.NewCommentService(commentRepo, userRepo, postRepo, notificationService)
 	likeService := service.NewLikeService(likeRepo, userRepo, postRepo, commentRepo)
 
@@ -164,9 +166,14 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	// Initialize post handler with Cloudinary if available
 	var postHandler *PostHandler
 	if cloudinaryClient != nil {
-		postHandler = NewPostHandlerWithCloudinary(postService, notificationService, cloudinaryClient, wsHub, cfg.JWTSecret)
+		postHandler = NewPostHandlerWithCloudinary(postService, postViewService, notificationService, cloudinaryClient, wsHub, cfg.JWTSecret)
 	} else {
-		postHandler = NewPostHandler(postService, cfg.JWTSecret)
+		// Create a simple post handler without Cloudinary but with view service
+		postHandler = &PostHandler{
+			postService:     postService,
+			postViewService: postViewService,
+			jwtSecret:       cfg.JWTSecret,
+		}
 	}
 
 	commentHandler := NewCommentHandler(commentService, cfg.JWTSecret)
@@ -268,6 +275,9 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			posts.GET("/:id/comments", commentHandler.GetCommentsByPost)
 			posts.GET("/:id/comments/count", commentHandler.GetCommentCount)
 
+			// Post views routes (must be before /:id route to avoid conflict)
+			posts.GET("/:id/views/count", postHandler.GetViewCount)
+
 			// Post detail route (wildcard route - must be last)
 			posts.GET("/:id", postHandler.GetPost)
 
@@ -279,6 +289,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 				posts.GET("/feed", postHandler.GetFeed)
 				posts.PUT("/:id", postHandler.UpdatePost)
 				posts.DELETE("/:id", postHandler.DeletePost)
+				posts.POST("/:id/view", postHandler.TrackView) // Track post view
 
 				// Post likes
 				posts.POST("/:id/like", likeHandler.LikePost)
