@@ -177,7 +177,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	}
 
 	commentHandler := NewCommentHandler(commentService, cfg.JWTSecret)
-	likeHandler := NewLikeHandler(likeService, cfg.JWTSecret)
+	likeHandler := NewLikeHandlerWithNotification(likeService, notificationService, postService, userRepo, cfg.JWTSecret)
 
 	// API routes
 	api := r.Group("/api/v1")

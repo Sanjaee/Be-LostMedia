@@ -19,6 +19,8 @@ type NotificationService interface {
 	SendCommentReplyNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
 	SendPostCommentNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
 	SendPostUploadCompletedNotification(userID, postID string, imageCount int) error
+	SendPostLikedNotification(receiverID, senderID, senderName, postID string) error
+	CheckPostLikedNotificationExists(senderID, postID string) (bool, error)
 	GetNotificationsByUserID(userID string, limit, offset int) ([]*model.Notification, error)
 	GetUnreadNotifications(userID string) ([]*model.Notification, error)
 	GetUnreadCount(userID string) (int64, error)
@@ -93,8 +95,8 @@ func (s *notificationService) sendNotification(
 			if commentID, ok := data["comment_id"].(string); ok {
 				notification.TargetID = &commentID
 			}
-		} else if notifType == model.NotificationTypePostUploadCompleted {
-			// For post upload completed, use post_id as target_id
+		} else if notifType == model.NotificationTypePostUploadCompleted || notifType == model.NotificationTypePostLiked {
+			// For post upload completed and post liked, use post_id as target_id
 			if postID, ok := data["post_id"].(string); ok {
 				notification.TargetID = &postID
 			}
@@ -313,6 +315,61 @@ func (s *notificationService) SendPostUploadCompletedNotification(userID, postID
 	return s.sendNotification(
 		userID,
 		model.NotificationTypePostUploadCompleted,
+		title,
+		message,
+		data,
+	)
+}
+
+// CheckPostLikedNotificationExists checks if a post liked notification already exists for this sender and post
+func (s *notificationService) CheckPostLikedNotificationExists(senderID, postID string) (bool, error) {
+	// Check if notification with type "post_liked" exists for this post and sender
+	// We'll check by looking for notifications with target_id = postID and sender_id = senderID
+	notifications, err := s.notifRepo.FindByUserID(senderID, 100, 0) // Get recent notifications
+	if err != nil {
+		return false, err
+	}
+
+	// Check if any notification matches: type = post_liked, target_id = postID, sender_id = senderID
+	for _, notif := range notifications {
+		if notif.Type == model.NotificationTypePostLiked &&
+			notif.TargetID != nil && *notif.TargetID == postID &&
+			notif.SenderID != nil && *notif.SenderID == senderID {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// SendPostLikedNotification sends a post liked notification (only once per user per post)
+func (s *notificationService) SendPostLikedNotification(receiverID, senderID, senderName, postID string) error {
+	// Check if notification already exists by querying receiver's notifications
+	// Get recent notifications for the receiver
+	notifications, err := s.notifRepo.FindByUserID(receiverID, 1000, 0)
+	if err == nil {
+		// Check if any notification matches: type = post_liked, target_id = postID, sender_id = senderID
+		for _, notif := range notifications {
+			if notif.Type == model.NotificationTypePostLiked &&
+				notif.TargetID != nil && *notif.TargetID == postID &&
+				notif.SenderID != nil && *notif.SenderID == senderID {
+				// Notification already exists, don't send again
+				return nil
+			}
+		}
+	}
+
+	title := "Post Disukai"
+	message := fmt.Sprintf("%s menyukai post Anda", senderName)
+	data := map[string]interface{}{
+		"post_id":     postID,
+		"sender_id":   senderID,
+		"sender_name": senderName,
+	}
+
+	return s.sendNotification(
+		receiverID,
+		model.NotificationTypePostLiked,
 		title,
 		message,
 		data,

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"yourapp/internal/repository"
 	"yourapp/internal/service"
 	"yourapp/internal/util"
 
@@ -11,14 +12,33 @@ import (
 )
 
 type LikeHandler struct {
-	likeService service.LikeService
-	jwtSecret   string
+	likeService         service.LikeService
+	notificationService service.NotificationService
+	postService         service.PostService
+	userRepo            repository.UserRepository
+	jwtSecret           string
 }
 
 func NewLikeHandler(likeService service.LikeService, jwtSecret string) *LikeHandler {
 	return &LikeHandler{
 		likeService: likeService,
 		jwtSecret:   jwtSecret,
+	}
+}
+
+func NewLikeHandlerWithNotification(
+	likeService service.LikeService,
+	notificationService service.NotificationService,
+	postService service.PostService,
+	userRepo repository.UserRepository,
+	jwtSecret string,
+) *LikeHandler {
+	return &LikeHandler{
+		likeService:         likeService,
+		notificationService: notificationService,
+		postService:         postService,
+		userRepo:            userRepo,
+		jwtSecret:           jwtSecret,
 	}
 }
 
@@ -45,10 +65,45 @@ func (h *LikeHandler) LikePost(c *gin.Context) {
 		req.Reaction = "like"
 	}
 
+	// Check if user already liked this post (before creating new like)
+	alreadyLiked, _, _ := h.likeService.CheckUserLiked(userID.(string), "post", postID)
+
 	like, err := h.likeService.LikePost(userID.(string), postID, req.Reaction)
 	if err != nil {
 		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
 		return
+	}
+
+	// Send notification only if this is a NEW like (not an update to existing like)
+	// If user already liked before, don't send notification (even if they unlike and like again)
+	if h.notificationService != nil && h.postService != nil && !alreadyLiked {
+		// Get post to find owner
+		post, err := h.postService.GetPostByID(postID, userID.(string))
+		if err == nil && post != nil {
+			// Only send notification if post owner is different from liker
+			if post.UserID != userID.(string) {
+				// Get sender name from user repository
+				senderName := "Seseorang"
+				if h.userRepo != nil {
+					user, err := h.userRepo.FindByID(userID.(string))
+					if err == nil && user != nil {
+						if user.FullName != "" {
+							senderName = user.FullName
+						} else if user.Username != nil && *user.Username != "" {
+							senderName = *user.Username
+						}
+					}
+				}
+
+				// Send notification (will check internally if already sent)
+				_ = h.notificationService.SendPostLikedNotification(
+					post.UserID,
+					userID.(string),
+					senderName,
+					postID,
+				)
+			}
+		}
 	}
 
 	util.SuccessResponse(c, http.StatusOK, "Post liked successfully", gin.H{"like": like})
@@ -168,9 +223,9 @@ func (h *LikeHandler) GetLikes(c *gin.Context) {
 	}
 
 	util.SuccessResponse(c, http.StatusOK, "Likes retrieved successfully", gin.H{
-		"likes": likes,
-		"total": total,
-		"limit": limit,
+		"likes":  likes,
+		"total":  total,
+		"limit":  limit,
 		"offset": offset,
 	})
 }

@@ -15,6 +15,7 @@ type PostService interface {
 	GetPostsByUserID(userID string, viewerID string, limit, offset int) ([]*model.Post, error)
 	GetPostsByGroupID(groupID string, viewerID string, limit, offset int) ([]*model.Post, error)
 	GetFeed(userID string, limit, offset int) ([]*model.Post, error)
+	GetFeedByEngagement(userID string, limit, offset int) ([]*model.Post, error)
 	UpdatePost(userID string, postID string, req UpdatePostRequest) (*model.Post, error)
 	DeletePost(userID string, postID string) error
 	CountPostsByUserID(userID string) (int64, error)
@@ -151,7 +152,7 @@ func (s *postService) GetPostsByGroupID(groupID string, viewerID string, limit, 
 	return posts, nil
 }
 
-// GetFeed retrieves feed posts for a user
+// GetFeed retrieves feed posts for a user (sorted by newest first)
 func (s *postService) GetFeed(userID string, limit, offset int) ([]*model.Post, error) {
 	// Check if user exists
 	_, err := s.userRepo.FindByID(userID)
@@ -162,6 +163,22 @@ func (s *postService) GetFeed(userID string, limit, offset int) ([]*model.Post, 
 	posts, err := s.postRepo.FindFeed(userID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feed: %w", err)
+	}
+
+	return posts, nil
+}
+
+// GetFeedByEngagement retrieves feed posts sorted by engagement (likes + comments + views)
+func (s *postService) GetFeedByEngagement(userID string, limit, offset int) ([]*model.Post, error) {
+	// Check if user exists
+	_, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+
+	posts, err := s.postRepo.FindFeedByEngagement(userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feed by engagement: %w", err)
 	}
 
 	return posts, nil

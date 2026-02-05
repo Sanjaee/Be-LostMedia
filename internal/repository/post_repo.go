@@ -17,6 +17,7 @@ type PostRepository interface {
 	FindByUserID(userID string, limit, offset int) ([]*model.Post, error)
 	FindByGroupID(groupID string, limit, offset int) ([]*model.Post, error)
 	FindFeed(userID string, limit, offset int) ([]*model.Post, error) // Feed for user (friends' posts + own posts)
+	FindFeedByEngagement(userID string, limit, offset int) ([]*model.Post, error) // Feed sorted by engagement (likes + comments + views)
 	Update(post *model.Post) error
 	Delete(id string) error
 	CountByUserID(userID string) (int64, error)
@@ -184,6 +185,102 @@ func (r *postRepository) FindFeed(userID string, limit, offset int) ([]*model.Po
 	}
 
 	return posts, nil
+}
+
+// FindFeedByEngagement finds feed posts sorted by engagement score (likes + comments + views)
+func (r *postRepository) FindFeedByEngagement(userID string, limit, offset int) ([]*model.Post, error) {
+	// Try to get from cache first
+	cacheKey := fmt.Sprintf("%s%s:engagement:%d:%d", postFeedCachePrefix, userID, limit, offset)
+	if r.redis != nil {
+		cached, err := r.getListFromCache(cacheKey)
+		if err == nil && cached != nil {
+			return cached, nil
+		}
+	}
+
+	// Get all posts first
+	var posts []*model.Post
+	err := r.db.Preload("User").Preload("Group").Preload("SharedPost").
+		Preload("Tags.TaggedUser").Preload("Location").
+		Where("group_id IS NULL").
+		Find(&posts).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate engagement score for each post
+	type PostWithScore struct {
+		Post  *model.Post
+		Score int64
+	}
+	
+	postsWithScore := make([]PostWithScore, 0, len(posts))
+	
+	for _, post := range posts {
+		// Get like count
+		var likeCount int64
+		r.db.Model(&model.Like{}).
+			Where("target_type = ? AND target_id = ?", "post", post.ID).
+			Count(&likeCount)
+		
+		// Get comment count
+		var commentCount int64
+		r.db.Model(&model.Comment{}).
+			Where("post_id = ?", post.ID).
+			Count(&commentCount)
+		
+		// Get view count
+		var viewCount int64
+		r.db.Model(&model.PostView{}).
+			Where("post_id = ?", post.ID).
+			Count(&viewCount)
+		
+		// Calculate engagement score
+		// Weight: likes = 2, comments = 3, views = 1
+		score := (likeCount * 2) + (commentCount * 3) + (viewCount * 1)
+		
+		postsWithScore = append(postsWithScore, PostWithScore{
+			Post:  post,
+			Score: score,
+		})
+	}
+	
+	// Sort by score descending, then by created_at descending for tie-breaking
+	// Simple bubble sort (can be optimized later)
+	for i := 0; i < len(postsWithScore)-1; i++ {
+		for j := i + 1; j < len(postsWithScore); j++ {
+			if postsWithScore[i].Score < postsWithScore[j].Score {
+				postsWithScore[i], postsWithScore[j] = postsWithScore[j], postsWithScore[i]
+			} else if postsWithScore[i].Score == postsWithScore[j].Score {
+				// Tie-break: newest first
+				if postsWithScore[i].Post.CreatedAt.Before(postsWithScore[j].Post.CreatedAt) {
+					postsWithScore[i], postsWithScore[j] = postsWithScore[j], postsWithScore[i]
+				}
+			}
+		}
+	}
+	
+	// Extract posts and apply pagination
+	result := make([]*model.Post, 0, limit)
+	start := offset
+	end := offset + limit
+	if start > len(postsWithScore) {
+		return []*model.Post{}, nil
+	}
+	if end > len(postsWithScore) {
+		end = len(postsWithScore)
+	}
+	
+	for i := start; i < end; i++ {
+		result = append(result, postsWithScore[i].Post)
+	}
+
+	// Cache the result
+	if r.redis != nil {
+		r.cachePostList(cacheKey, result)
+	}
+
+	return result, nil
 }
 
 // Update updates a post and invalidates cache
