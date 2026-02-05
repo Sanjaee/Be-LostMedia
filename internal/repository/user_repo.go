@@ -16,6 +16,8 @@ type UserRepository interface {
 	FindByUsername(username string) (*model.User, error)
 	FindByGoogleID(googleID string) (*model.User, error)
 	SearchUsers(keyword string, limit, offset int) ([]model.User, error)
+	FindAll(limit, offset int) ([]model.User, int64, error) // Get all users with pagination
+	Count() (int64, error)                                  // Count all users
 	Update(user *model.User) error
 	UpdateOTP(email string, otpCode string, expiresAt time.Time) error
 	VerifyOTP(email string, otpCode string) (*model.User, error)
@@ -158,4 +160,34 @@ func (r *userRepository) UpdateLastLogin(userID string) error {
 	return r.db.Model(&model.User{}).
 		Where("id = ?", userID).
 		Update("last_login", now).Error
+}
+
+// FindAll gets all users with pagination
+func (r *userRepository) FindAll(limit, offset int) ([]model.User, int64, error) {
+	var users []model.User
+	var total int64
+
+	// Count total
+	if err := r.db.Model(&model.User{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Get users with pagination
+	err := r.db.Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&users).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return users, total, nil
+}
+
+// Count counts all users
+func (r *userRepository) Count() (int64, error) {
+	var count int64
+	err := r.db.Model(&model.User{}).Count(&count).Error
+	return count, err
 }

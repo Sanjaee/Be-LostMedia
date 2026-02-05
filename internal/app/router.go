@@ -159,6 +159,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 
 	// Initialize handlers
 	authHandler := NewAuthHandler(authService, cfg.JWTSecret)
+	userHandler := NewUserHandler(userRepo, cfg.JWTSecret)
 	profileHandler := NewProfileHandler(profileService, cfg.JWTSecret)
 	friendshipHandler := NewFriendshipHandler(friendshipService, cfg.JWTSecret)
 	notificationHandler := NewNotificationHandler(notificationService, cfg.JWTSecret)
@@ -206,6 +207,17 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			users.Use(authHandler.AuthMiddleware())
 			{
 				users.GET("/search", authHandler.SearchUsers)
+			}
+		}
+
+		// Admin routes (admin only)
+		admin := api.Group("/admin")
+		{
+			admin.Use(authHandler.AuthMiddleware())
+			admin.Use(authHandler.AdminMiddleware())
+			{
+				admin.GET("/users", userHandler.GetAllUsers)
+				admin.GET("/stats", userHandler.GetUserStats)
 			}
 		}
 

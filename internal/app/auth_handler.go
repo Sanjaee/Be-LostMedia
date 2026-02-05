@@ -357,3 +357,32 @@ func (h *AuthHandler) AuthMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// AdminMiddleware validates that the user is an admin
+func (h *AuthHandler) AdminMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// First check authentication
+		if _, exists := c.Get("userID"); !exists {
+			util.Unauthorized(c, "User not authenticated")
+			c.Abort()
+			return
+		}
+
+		// Get user type
+		userType, exists := c.Get("userType")
+		if !exists {
+			util.Unauthorized(c, "User type not found")
+			c.Abort()
+			return
+		}
+
+		// Check if user is admin
+		if userType != "admin" {
+			util.ErrorResponse(c, http.StatusForbidden, "Access denied: Admin role required", nil)
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
