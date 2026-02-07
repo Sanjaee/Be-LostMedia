@@ -181,11 +181,10 @@ func (r *postRepository) FindFeed(userID string, limit, offset int) ([]*model.Po
 		}
 	}
 
-	// Get all posts (all posts are public now)
+	// Get all posts (all posts are public now - including group posts)
 	var posts []*model.Post
 	err := r.db.Preload("User").Preload("Group").Preload("SharedPost").
 		Preload("Tags.TaggedUser").Preload("Location").
-		Where("group_id IS NULL"). // Exclude group posts from feed for now
 		Order("created_at DESC").
 		Limit(limit).Offset(offset).
 		Find(&posts).Error
@@ -225,11 +224,10 @@ func (r *postRepository) FindFeedByEngagement(userID string, limit, offset int) 
 
 	// If Redis sorted set is empty or not available, build it
 	if len(postIDs) == 0 {
-		// Get all posts first
+		// Get all posts first (including group posts)
 		var allPosts []*model.Post
 		err := r.db.Preload("User").Preload("Group").Preload("SharedPost").
 			Preload("Tags.TaggedUser").Preload("Location").
-			Where("group_id IS NULL").
 			Find(&allPosts).Error
 		if err != nil {
 			return nil, err
@@ -306,11 +304,11 @@ func (r *postRepository) FindFeedByEngagement(userID string, limit, offset int) 
 		}
 	}
 
-	// Load posts by IDs from database
+	// Load posts by IDs from database (including group posts)
 	var posts []*model.Post
 	err := r.db.Preload("User").Preload("Group").Preload("SharedPost").
 		Preload("Tags.TaggedUser").Preload("Location").
-		Where("id IN ? AND group_id IS NULL", postIDs).
+		Where("id IN ?", postIDs).
 		Find(&posts).Error
 	if err != nil {
 		return nil, err
