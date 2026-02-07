@@ -451,10 +451,10 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 	}
 
 	// Validate file sizes (max 3MB each)
-	maxSize := int64(3 * 1024 * 1024) // 3MB
+	maxSize := int64(10 * 1024 * 1024) // 10MB
 	for _, fileHeader := range files {
 		if fileHeader.Size > maxSize {
-			util.BadRequest(c, fmt.Sprintf("File %s exceeds 3MB limit", fileHeader.Filename))
+			util.BadRequest(c, fmt.Sprintf("File %s exceeds 10MB limit", fileHeader.Filename))
 			return
 		}
 	}

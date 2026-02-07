@@ -93,13 +93,13 @@ func (c *CloudinaryClient) CompressImage(filePath string) (string, error) {
 	return compressedPath, nil
 }
 
-// UploadImage uploads an image file to Cloudinary
+// UploadImage uploads an image file to Cloudinary (delivered as WebP)
 func (c *CloudinaryClient) UploadImage(filePath string) (string, error) {
 	ctx := context.Background()
 
 	result, err := c.cld.Upload.Upload(ctx, filePath, uploader.UploadParams{
 		Folder:         c.cfg.CloudinaryFolder,
-		Transformation: "q_auto,f_auto,w_1280",
+		Transformation: "q_auto,f_webp,w_1280", // WebP format, auto quality, max width 1280
 		ResourceType:   "image",
 	})
 
@@ -107,7 +107,10 @@ func (c *CloudinaryClient) UploadImage(filePath string) (string, error) {
 		return "", fmt.Errorf("error uploading to cloudinary: %w", err)
 	}
 
-	return result.SecureURL, nil
+	// Inject transformation into URL so image is served as WebP
+	url := result.SecureURL
+	url = strings.Replace(url, "/upload/", "/upload/f_webp,q_auto,w_1280/", 1)
+	return url, nil
 }
 
 // ensureTmpDir ensures the tmp directory exists
