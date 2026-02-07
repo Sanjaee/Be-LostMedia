@@ -16,6 +16,7 @@ type CommentService interface {
 	UpdateComment(userID, commentID string, req UpdateCommentRequest) (*model.Comment, error)
 	DeleteComment(userID, commentID string) error
 	GetCommentCount(postID string) (int64, error)
+	GetCommentCountsBatch(postIDs []string) (map[string]int64, error)
 }
 
 type commentService struct {
@@ -247,4 +248,9 @@ func (s *commentService) DeleteComment(userID, commentID string) error {
 // GetCommentCount gets the comment count for a post
 func (s *commentService) GetCommentCount(postID string) (int64, error) {
 	return s.commentRepo.CountByPostID(postID)
+}
+
+// GetCommentCountsBatch gets comment counts for multiple posts in one query
+func (s *commentService) GetCommentCountsBatch(postIDs []string) (map[string]int64, error) {
+	return s.commentRepo.CountByPostIDs(postIDs)
 }

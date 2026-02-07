@@ -14,6 +14,8 @@ type LikeService interface {
 	UnlikeComment(userID, commentID string) error
 	GetLikesByTarget(targetType, targetID string, limit, offset int) ([]*model.Like, int64, error)
 	GetLikeCount(targetType, targetID string) (int64, error)
+	GetLikeCountsBatch(targetType string, targetIDs []string) (map[string]int64, error)
+	GetUserLikedTargets(userID, targetType string, targetIDs []string) (map[string]bool, error)
 	CheckUserLiked(userID, targetType, targetID string) (bool, *model.Like, error)
 }
 
@@ -207,6 +209,16 @@ func (s *likeService) GetLikesByTarget(targetType, targetID string, limit, offse
 // GetLikeCount gets the like count for a target
 func (s *likeService) GetLikeCount(targetType, targetID string) (int64, error) {
 	return s.likeRepo.CountByTarget(targetType, targetID)
+}
+
+// GetLikeCountsBatch gets like counts for multiple targets in one query
+func (s *likeService) GetLikeCountsBatch(targetType string, targetIDs []string) (map[string]int64, error) {
+	return s.likeRepo.CountByTargets(targetType, targetIDs)
+}
+
+// GetUserLikedTargets returns which targets the user has liked
+func (s *likeService) GetUserLikedTargets(userID, targetType string, targetIDs []string) (map[string]bool, error) {
+	return s.likeRepo.FindUserLikedTargets(userID, targetType, targetIDs)
 }
 
 // CheckUserLiked checks if user has liked a target

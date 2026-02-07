@@ -20,6 +20,11 @@ type Post struct {
 	UpdatedAt    time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 
+	// Computed fields for API response (not in DB)
+	LikesCount    int64 `json:"likes_count,omitempty" gorm:"-"`
+	CommentsCount int64 `json:"comments_count,omitempty" gorm:"-"`
+	UserLiked     bool  `json:"user_liked,omitempty" gorm:"-"`
+
 	// Relationships
 	User       User          `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
 	Group      *Group        `gorm:"foreignKey:GroupID;references:ID" json:"group,omitempty"`

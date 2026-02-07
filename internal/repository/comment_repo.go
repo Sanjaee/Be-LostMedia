@@ -19,6 +19,7 @@ type CommentRepository interface {
 	Update(comment *model.Comment) error
 	Delete(id string) error
 	CountByPostID(postID string) (int64, error)
+	CountByPostIDs(postIDs []string) (map[string]int64, error)
 	CountByParentID(parentID string) (int64, error)
 }
 
@@ -277,6 +278,35 @@ func (r *commentRepository) CountByPostID(postID string) (int64, error) {
 	}
 
 	return count, nil
+}
+
+// CountByPostIDs counts comments for multiple posts in one query (top-level only)
+func (r *commentRepository) CountByPostIDs(postIDs []string) (map[string]int64, error) {
+	if len(postIDs) == 0 {
+		return map[string]int64{}, nil
+	}
+	var results []struct {
+		PostID string
+		Count  int64
+	}
+	err := r.db.Model(&model.Comment{}).
+		Select("post_id, count(*) as count").
+		Where("post_id IN ? AND parent_id IS NULL", postIDs).
+		Group("post_id").
+		Find(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]int64)
+	for _, row := range results {
+		m[row.PostID] = row.Count
+	}
+	for _, id := range postIDs {
+		if _, ok := m[id]; !ok {
+			m[id] = 0
+		}
+	}
+	return m, nil
 }
 
 // CountByParentID counts replies to a comment

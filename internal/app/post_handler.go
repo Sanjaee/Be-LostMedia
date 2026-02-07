@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 
@@ -21,7 +20,9 @@ type PostHandler struct {
 	wsHub               interface {
 		BroadcastToUser(string, map[string]interface{})
 	}
-	jwtSecret string
+	likeService    service.LikeService
+	commentService service.CommentService
+	jwtSecret      string
 }
 
 func NewPostHandler(postService service.PostService, jwtSecret string) *PostHandler {
@@ -39,6 +40,8 @@ func NewPostHandlerWithCloudinary(
 	wsHub interface {
 		BroadcastToUser(string, map[string]interface{})
 	},
+	likeService service.LikeService,
+	commentService service.CommentService,
 	jwtSecret string,
 ) *PostHandler {
 	return &PostHandler{
@@ -47,6 +50,8 @@ func NewPostHandlerWithCloudinary(
 		notificationService: notificationService,
 		cloudinaryClient:    cloudinaryClient,
 		wsHub:               wsHub,
+		likeService:         likeService,
+		commentService:     commentService,
 		jwtSecret:           jwtSecret,
 	}
 }
@@ -96,6 +101,18 @@ func (h *PostHandler) GetPost(c *gin.Context) {
 		return
 	}
 
+	// Enrich with engagement counts
+	if h.likeService != nil && h.commentService != nil {
+		likeCount, _ := h.likeService.GetLikeCount(model.TargetTypePost, post.ID)
+		commentCount, _ := h.commentService.GetCommentCount(post.ID)
+		post.LikesCount = likeCount
+		post.CommentsCount = commentCount
+		if viewerID != "" {
+			liked, _, _ := h.likeService.CheckUserLiked(viewerID, model.TargetTypePost, post.ID)
+			post.UserLiked = liked
+		}
+	}
+
 	util.SuccessResponse(c, http.StatusOK, "Post retrieved successfully", gin.H{"post": post})
 }
 
@@ -135,6 +152,25 @@ func (h *PostHandler) GetPostsByUserID(c *gin.Context) {
 	if err != nil {
 		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
 		return
+	}
+
+	// Enrich with engagement counts
+	if h.likeService != nil && h.commentService != nil && len(posts) > 0 {
+		postIDs := make([]string, len(posts))
+		for i, p := range posts {
+			postIDs[i] = p.ID
+		}
+		likeCounts, _ := h.likeService.GetLikeCountsBatch(model.TargetTypePost, postIDs)
+		commentCounts, _ := h.commentService.GetCommentCountsBatch(postIDs)
+		userLiked := make(map[string]bool)
+		if viewerID != "" {
+			userLiked, _ = h.likeService.GetUserLikedTargets(viewerID, model.TargetTypePost, postIDs)
+		}
+		for _, p := range posts {
+			p.LikesCount = likeCounts[p.ID]
+			p.CommentsCount = commentCounts[p.ID]
+			p.UserLiked = userLiked[p.ID]
+		}
 	}
 
 	util.SuccessResponse(c, http.StatusOK, "Posts retrieved successfully", gin.H{
@@ -182,6 +218,25 @@ func (h *PostHandler) GetPostsByGroupID(c *gin.Context) {
 		return
 	}
 
+	// Enrich with engagement counts
+	if h.likeService != nil && h.commentService != nil && len(posts) > 0 {
+		postIDs := make([]string, len(posts))
+		for i, p := range posts {
+			postIDs[i] = p.ID
+		}
+		likeCounts, _ := h.likeService.GetLikeCountsBatch(model.TargetTypePost, postIDs)
+		commentCounts, _ := h.commentService.GetCommentCountsBatch(postIDs)
+		userLiked := make(map[string]bool)
+		if viewerID != "" {
+			userLiked, _ = h.likeService.GetUserLikedTargets(viewerID, model.TargetTypePost, postIDs)
+		}
+		for _, p := range posts {
+			p.LikesCount = likeCounts[p.ID]
+			p.CommentsCount = commentCounts[p.ID]
+			p.UserLiked = userLiked[p.ID]
+		}
+	}
+
 	util.SuccessResponse(c, http.StatusOK, "Posts retrieved successfully", gin.H{
 		"posts":  posts,
 		"limit":  limit,
@@ -226,6 +281,22 @@ func (h *PostHandler) GetFeed(c *gin.Context) {
 	if err != nil {
 		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
 		return
+	}
+
+	// Enrich posts with likes_count, comments_count, user_liked (single batch query each)
+	if h.likeService != nil && h.commentService != nil && len(posts) > 0 {
+		postIDs := make([]string, len(posts))
+		for i, p := range posts {
+			postIDs[i] = p.ID
+		}
+		likeCounts, _ := h.likeService.GetLikeCountsBatch(model.TargetTypePost, postIDs)
+		commentCounts, _ := h.commentService.GetCommentCountsBatch(postIDs)
+		userLiked, _ := h.likeService.GetUserLikedTargets(userID.(string), model.TargetTypePost, postIDs)
+		for _, p := range posts {
+			p.LikesCount = likeCounts[p.ID]
+			p.CommentsCount = commentCounts[p.ID]
+			p.UserLiked = userLiked[p.ID]
+		}
 	}
 
 	util.SuccessResponse(c, http.StatusOK, "Feed retrieved successfully", gin.H{
@@ -415,14 +486,12 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 		for _, fileHeader := range files {
 			file, err := fileHeader.Open()
 			if err != nil {
-				log.Printf("Error opening file %s: %v", fileHeader.Filename, err)
 				continue
 			}
 
 			fileData, err := util.ReadFileFromReader(file, fileHeader.Filename)
 			file.Close()
 			if err != nil {
-				log.Printf("Error reading file %s: %v", fileHeader.Filename, err)
 				continue
 			}
 
@@ -430,14 +499,12 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 		}
 
 		if len(fileDataList) == 0 {
-			log.Printf("No valid files processed for post %s", post.ID)
 			return
 		}
 
 		// Process and upload images
 		imageURLs, err := h.cloudinaryClient.ProcessMultipleFiles(fileDataList)
 		if err != nil {
-			log.Printf("Error processing images for post %s: %v", post.ID, err)
 			return
 		}
 
@@ -448,20 +515,13 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 
 		updatedPost, err := h.postService.UpdatePost(userID.(string), post.ID, updateReq)
 		if err != nil {
-			log.Printf("Error updating post %s with image URLs: %v", post.ID, err)
 			return
 		}
 
-		log.Printf("Post %s processing completed with %d images", post.ID, len(imageURLs))
-
 		// Send notification to user that upload is completed (saves to DB and sends via WebSocket)
 		if h.notificationService != nil {
-			if err := h.notificationService.SendPostUploadCompletedNotification(userID.(string), updatedPost.ID, len(imageURLs)); err != nil {
-				log.Printf("Error sending post upload completed notification: %v", err)
-			}
+			_ = h.notificationService.SendPostUploadCompletedNotification(userID.(string), updatedPost.ID, len(imageURLs))
 		}
-
-		log.Printf("Post %s is ready with images", updatedPost.ID)
 	}()
 
 	// Send initial WebSocket notification that upload is pending

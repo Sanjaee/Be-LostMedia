@@ -167,12 +167,14 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	// Initialize post handler with Cloudinary if available
 	var postHandler *PostHandler
 	if cloudinaryClient != nil {
-		postHandler = NewPostHandlerWithCloudinary(postService, postViewService, notificationService, cloudinaryClient, wsHub, cfg.JWTSecret)
+		postHandler = NewPostHandlerWithCloudinary(postService, postViewService, notificationService, cloudinaryClient, wsHub, likeService, commentService, cfg.JWTSecret)
 	} else {
-		// Create a simple post handler without Cloudinary but with view service
+		// Create a simple post handler without Cloudinary but with view service and engagement enrichment
 		postHandler = &PostHandler{
 			postService:     postService,
 			postViewService: postViewService,
+			likeService:     likeService,
+			commentService: commentService,
 			jwtSecret:       cfg.JWTSecret,
 		}
 	}

@@ -18,6 +18,8 @@ type LikeRepository interface {
 	FindByTarget(targetType, targetID string) ([]*model.Like, error)
 	FindByUserAndTarget(userID, targetType, targetID string) (*model.Like, error)
 	CountByTarget(targetType, targetID string) (int64, error)
+	CountByTargets(targetType string, targetIDs []string) (map[string]int64, error)
+	FindUserLikedTargets(userID, targetType string, targetIDs []string) (map[string]bool, error)
 	Delete(id string) error
 	DeleteByUserAndTarget(userID, targetType, targetID string) error
 }
@@ -148,6 +150,55 @@ func (r *likeRepository) CountByTarget(targetType, targetID string) (int64, erro
 	}
 
 	return count, nil
+}
+
+// CountByTargets counts likes for multiple targets in one query
+func (r *likeRepository) CountByTargets(targetType string, targetIDs []string) (map[string]int64, error) {
+	if len(targetIDs) == 0 {
+		return map[string]int64{}, nil
+	}
+	var results []struct {
+		TargetID string
+		Count    int64
+	}
+	err := r.db.Model(&model.Like{}).
+		Select("target_id, count(*) as count").
+		Where("target_type = ? AND target_id IN ?", targetType, targetIDs).
+		Group("target_id").
+		Find(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]int64)
+	for _, row := range results {
+		m[row.TargetID] = row.Count
+	}
+	// Ensure all IDs have entry (0 if not found)
+	for _, id := range targetIDs {
+		if _, ok := m[id]; !ok {
+			m[id] = 0
+		}
+	}
+	return m, nil
+}
+
+// FindUserLikedTargets returns which targets the user has liked
+func (r *likeRepository) FindUserLikedTargets(userID, targetType string, targetIDs []string) (map[string]bool, error) {
+	if len(targetIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+	var likes []model.Like
+	err := r.db.Select("target_id").
+		Where("user_id = ? AND target_type = ? AND target_id IN ?", userID, targetType, targetIDs).
+		Find(&likes).Error
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]bool)
+	for _, like := range likes {
+		m[like.TargetID] = true
+	}
+	return m, nil
 }
 
 // Delete deletes a like and invalidates cache
