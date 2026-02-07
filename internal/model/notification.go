@@ -49,4 +49,5 @@ const (
 	NotificationTypePostComment         = "post_comment"
 	NotificationTypePostUploadCompleted = "post_upload_completed"
 	NotificationTypePostLiked           = "post_liked"
+	NotificationTypeRoleUpdated         = "role_updated"
 )

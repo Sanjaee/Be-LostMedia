@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"yourapp/internal/repository"
+	"yourapp/internal/service"
 	"yourapp/internal/util"
 	"yourapp/internal/websocket"
 
@@ -14,16 +15,18 @@ import (
 )
 
 type UserHandler struct {
-	userRepo  repository.UserRepository
-	jwtSecret string
-	wsHub     *websocket.Hub
+	userRepo           repository.UserRepository
+	jwtSecret          string
+	wsHub              *websocket.Hub
+	notificationService service.NotificationService
 }
 
-func NewUserHandler(userRepo repository.UserRepository, jwtSecret string, wsHub *websocket.Hub) *UserHandler {
+func NewUserHandler(userRepo repository.UserRepository, jwtSecret string, wsHub *websocket.Hub, notificationService service.NotificationService) *UserHandler {
 	return &UserHandler{
-		userRepo:  userRepo,
-		jwtSecret: jwtSecret,
-		wsHub:     wsHub,
+		userRepo:            userRepo,
+		jwtSecret:           jwtSecret,
+		wsHub:               wsHub,
+		notificationService: notificationService,
 	}
 }
 
@@ -235,6 +238,17 @@ func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 	if err := h.userRepo.UpdateUserRole(targetID, role); err != nil {
 		util.ErrorResponse(c, http.StatusInternalServerError, "Failed to update role", nil)
 		return
+	}
+
+	// Notify the user (saves to DB + real-time WebSocket) so it appears in NotificationDialog
+	ownerID := currentUserID.(string)
+	owner, _ := h.userRepo.FindByID(ownerID)
+	ownerName := "Owner"
+	if owner != nil {
+		ownerName = owner.FullName
+	}
+	if h.notificationService != nil {
+		_ = h.notificationService.SendRoleUpdatedNotification(targetID, ownerID, ownerName, role)
 	}
 
 	util.SuccessResponse(c, http.StatusOK, "Role updated successfully", gin.H{

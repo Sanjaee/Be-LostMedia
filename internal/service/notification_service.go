@@ -20,6 +20,7 @@ type NotificationService interface {
 	SendPostCommentNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
 	SendPostUploadCompletedNotification(userID, postID string, imageCount int) error
 	SendPostLikedNotification(receiverID, senderID, senderName, postID string) error
+	SendRoleUpdatedNotification(receiverID, senderID, senderName, newRole string) error
 	CheckPostLikedNotificationExists(senderID, postID string) (bool, error)
 	GetNotificationsByUserID(userID string, limit, offset int) ([]*model.Notification, error)
 	GetUnreadNotifications(userID string) ([]*model.Notification, error)
@@ -370,6 +371,32 @@ func (s *notificationService) SendPostLikedNotification(receiverID, senderID, se
 	return s.sendNotification(
 		receiverID,
 		model.NotificationTypePostLiked,
+		title,
+		message,
+		data,
+	)
+}
+
+// SendRoleUpdatedNotification sends a notification when owner changes a user's role
+func (s *notificationService) SendRoleUpdatedNotification(receiverID, senderID, senderName, newRole string) error {
+	roleLabels := map[string]string{
+		"owner": "Owner", "admin": "Admin", "mod": "Moderator",
+		"mvp": "MVP", "god": "God", "vip": "VIP", "member": "Member",
+	}
+	roleLabel := roleLabels[newRole]
+	if roleLabel == "" {
+		roleLabel = newRole
+	}
+	title := "Role Diubah"
+	message := fmt.Sprintf("Role Anda telah diubah menjadi %s oleh owner (%s).", roleLabel, senderName)
+	data := map[string]interface{}{
+		"sender_id":   senderID,
+		"sender_name": senderName,
+		"role":        newRole,
+	}
+	return s.sendNotification(
+		receiverID,
+		model.NotificationTypeRoleUpdated,
 		title,
 		message,
 		data,

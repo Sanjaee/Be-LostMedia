@@ -161,7 +161,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 
 	// Initialize handlers
 	authHandler := NewAuthHandler(authService, cfg.JWTSecret)
-	userHandler := NewUserHandler(userRepo, cfg.JWTSecret, wsHub)
+	userHandler := NewUserHandler(userRepo, cfg.JWTSecret, wsHub, notificationService)
 	profileHandler := NewProfileHandler(profileService, cfg.JWTSecret)
 	friendshipHandler := NewFriendshipHandler(friendshipService, cfg.JWTSecret)
 	notificationHandler := NewNotificationHandler(notificationService, cfg.JWTSecret)
