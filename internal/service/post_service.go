@@ -232,14 +232,14 @@ func (s *postService) DeletePost(userID string, postID string) error {
 
 	// Check if user owns this post
 	if post.UserID != userID {
-		// If not owner, check if user is admin
+		// If not owner, check if user is owner role
 		user, err := s.userRepo.FindByID(userID)
 		if err != nil {
 			return errors.New("user not found")
 		}
 		
-		// Only admin can delete other users' posts
-		if user.UserType != "admin" {
+		// Only owner can delete other users' posts
+		if user.UserType != "owner" {
 			return errors.New("unauthorized: you can only delete your own posts")
 		}
 	}

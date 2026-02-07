@@ -46,7 +46,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	}
 
 	// Auto migrate
-	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.Comment{}, &model.Like{}, &model.PostView{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.Comment{}, &model.Like{}, &model.PostView{}, &model.ChatMessage{}); err != nil {
 		panic("Failed to migrate database: " + err.Error())
 	}
 
@@ -66,6 +66,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	postRepo := repository.NewPostRepository(db, redisClient)
 	commentRepo := repository.NewCommentRepository(db, redisClient)
 	likeRepo := repository.NewLikeRepository(db, redisClient)
+	chatRepo := repository.NewChatRepository(db)
 
 	// Initialize RabbitMQ with retry logic
 	rabbitMQ := initRabbitMQWithRetry(cfg)
@@ -142,6 +143,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	postViewService := service.NewPostViewService(postViewRepo, postRepo, userRepo)
 	commentService := service.NewCommentService(commentRepo, userRepo, postRepo, notificationService)
 	likeService := service.NewLikeService(likeRepo, userRepo, postRepo, commentRepo)
+	chatService := service.NewChatService(chatRepo, userRepo, friendshipRepo)
 
 	// Initialize notification worker if RabbitMQ is available
 	// TODO: Re-enable RabbitMQ worker later for async processing
@@ -181,6 +183,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 
 	commentHandler := NewCommentHandler(commentService, cfg.JWTSecret)
 	likeHandler := NewLikeHandlerWithNotification(likeService, notificationService, postService, userRepo, cfg.JWTSecret)
+	chatHandler := NewChatHandler(chatService, wsHub)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -212,7 +215,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			}
 		}
 
-		// Admin routes (admin only)
+		// Admin routes (owner only)
 		admin := api.Group("/admin")
 		{
 			admin.Use(authHandler.AuthMiddleware())
@@ -337,6 +340,16 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			// Public routes
 			likes.GET("", likeHandler.GetLikes)
 			likes.GET("/count", likeHandler.GetLikeCount)
+		}
+
+		// Chat routes
+		chat := api.Group("/chat")
+		chat.Use(authHandler.AuthMiddleware())
+		{
+			chat.POST("/messages", chatHandler.SendMessage)
+			chat.GET("/messages", chatHandler.GetConversation)
+			chat.PUT("/read/:senderID", chatHandler.MarkAsRead)
+			chat.GET("/unread/count", chatHandler.GetUnreadCount)
 		}
 	}
 

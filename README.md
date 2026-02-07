@@ -214,6 +214,47 @@ Setelah menjalankan `docker-compose up -d`, services berikut akan tersedia:
   - Web-based PostgreSQL client untuk melihat dan mengelola database
   - Otomatis terhubung ke database yang dikonfigurasi
 
+## Chat (Real-time 1:1 Messaging)
+
+Chat antar user menggunakan REST API untuk mengirim/mengambil pesan dan WebSocket untuk menerima pesan secara real-time. Hanya user yang sudah berteman (friends) yang dapat saling mengirim pesan.
+
+### Tabel `chat_messages`
+
+| Kolom       | Tipe    | Keterangan              |
+|-------------|---------|-------------------------|
+| id          | uuid    | PK                      |
+| sender_id   | uuid    | FK ke users             |
+| receiver_id | uuid    | FK ke users             |
+| content     | text    | Isi pesan               |
+| is_read     | boolean | Status dibaca           |
+| created_at  | timestamp | Waktu dikirim        |
+| deleted_at  | timestamp | Soft delete           |
+
+### REST API Endpoints
+
+| Method | Endpoint                           | Keterangan                                           |
+|--------|------------------------------------|------------------------------------------------------|
+| POST   | `/api/v1/chat/messages`            | Kirim pesan. Body: `{ receiver_id, content }`        |
+| GET    | `/api/v1/chat/messages?with_user_id=X&limit=50&offset=0` | Ambil percakapan dengan user X        |
+| PUT    | `/api/v1/chat/read/:senderID`      | Tandai pesan dari user X sebagai sudah dibaca        |
+| GET    | `/api/v1/chat/unread/count`        | Jumlah pesan belum dibaca                            |
+
+### WebSocket Event
+
+Ketika ada pesan baru dikirim ke user, WebSocket akan mengirim event dengan struktur:
+
+- **Top-level (dari hub)**: `{ type: "notification", payload: { ... } }`
+- **Chat message di dalam payload**: `{ type: "chat_message", payload: { id, sender_id, receiver_id, content, created_at, sender } }`
+
+Client perlu memeriksa `data.type === "notification"` dan `data.payload?.type === "chat_message"`, lalu gunakan `data.payload.payload` sebagai objek pesan.
+
+### Alur Frontend
+
+1. User membuka feed, melihat daftar Kontak di sidebar kanan.
+2. Klik **Kontak** atau **Friends count** → muncul dialog daftar teman.
+3. Klik salah satu teman → muncul `ChatDialog` untuk obrolan 1:1.
+4. Kirim pesan via REST; terima pesan baru via WebSocket (`chat_message`).
+
 ## Architecture
 
 Aplikasi ini menggunakan **Clean Architecture** dengan layer separation:
@@ -358,6 +399,21 @@ Table likes {
 
   indexes {
     (user_id, target_type, target_id) [unique]
+  }
+}
+
+Table chat_messages {
+  id          uuid      [pk, default: `gen_random_uuid()`]
+  sender_id   uuid      [not null, ref: > users.id]
+  receiver_id uuid      [not null, ref: > users.id]
+  content     text      [not null]
+  is_read     boolean   [default: false]
+  created_at  timestamp [default: `now()`]
+  deleted_at  timestamp
+
+  indexes {
+    (sender_id, receiver_id)
+    (receiver_id, sender_id)
   }
 }
 

@@ -22,7 +22,7 @@ func NewUserHandler(userRepo repository.UserRepository, jwtSecret string) *UserH
 	}
 }
 
-// GetAllUsers handles getting all users (admin only)
+// GetAllUsers handles getting all users (owner only)
 // GET /api/v1/admin/users
 func (h *UserHandler) GetAllUsers(c *gin.Context) {
 	// Get pagination parameters
@@ -56,7 +56,7 @@ func (h *UserHandler) GetAllUsers(c *gin.Context) {
 	})
 }
 
-// GetUserStats handles getting user statistics (admin only)
+// GetUserStats handles getting user statistics (owner only)
 // GET /api/v1/admin/stats
 func (h *UserHandler) GetUserStats(c *gin.Context) {
 	total, err := h.userRepo.Count()
@@ -66,12 +66,12 @@ func (h *UserHandler) GetUserStats(c *gin.Context) {
 	}
 
 	// Get users by type
-	var adminCount, memberCount int64
+	var ownerCount, memberCount int64
 	allUsers, _, err := h.userRepo.FindAll(1000, 0) // Get all to count by type
 	if err == nil {
 		for _, user := range allUsers {
-			if user.UserType == "admin" {
-				adminCount++
+			if user.UserType == "owner" {
+				ownerCount++
 			} else {
 				memberCount++
 			}
@@ -91,7 +91,7 @@ func (h *UserHandler) GetUserStats(c *gin.Context) {
 	util.SuccessResponse(c, http.StatusOK, "User stats retrieved successfully", gin.H{
 		"total": total,
 		"by_type": gin.H{
-			"admin":  adminCount,
+			"owner":  ownerCount,
 			"member": memberCount,
 		},
 		"by_verification": gin.H{

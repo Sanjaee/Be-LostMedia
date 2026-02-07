@@ -358,7 +358,7 @@ func (h *AuthHandler) AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// AdminMiddleware validates that the user is an admin
+// AdminMiddleware validates that the user is an owner
 func (h *AuthHandler) AdminMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// First check authentication
@@ -376,9 +376,9 @@ func (h *AuthHandler) AdminMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Check if user is admin
-		if userType != "admin" {
-			util.ErrorResponse(c, http.StatusForbidden, "Access denied: Admin role required", nil)
+		// Check if user is owner
+		if userType != "owner" {
+			util.ErrorResponse(c, http.StatusForbidden, "Access denied: Owner role required", nil)
 			c.Abort()
 			return
 		}
