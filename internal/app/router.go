@@ -161,7 +161,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 
 	// Initialize handlers
 	authHandler := NewAuthHandler(authService, cfg.JWTSecret)
-	userHandler := NewUserHandler(userRepo, cfg.JWTSecret)
+	userHandler := NewUserHandler(userRepo, cfg.JWTSecret, wsHub)
 	profileHandler := NewProfileHandler(profileService, cfg.JWTSecret)
 	friendshipHandler := NewFriendshipHandler(friendshipService, cfg.JWTSecret)
 	notificationHandler := NewNotificationHandler(notificationService, cfg.JWTSecret)
@@ -224,6 +224,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			{
 				admin.GET("/users", userHandler.GetAllUsers)
 				admin.GET("/stats", userHandler.GetUserStats)
+				admin.POST("/users/:id/ban", userHandler.BanUser)
+				admin.POST("/users/:id/unban", userHandler.UnbanUser)
 			}
 		}
 

@@ -26,6 +26,8 @@ type UserRepository interface {
 	UpdatePassword(userID string, passwordHash string) error
 	UpdateLastLogin(userID string) error
 	Delete(userID string) error
+	BanUser(userID string, until time.Time, reason string) error
+	UnbanUser(userID string) error
 }
 
 type userRepository struct {
@@ -196,4 +198,26 @@ func (r *userRepository) Count() (int64, error) {
 // Delete soft-deletes a user by ID
 func (r *userRepository) Delete(userID string) error {
 	return r.db.Where("id = ?", userID).Delete(&model.User{}).Error
+}
+
+// BanUser bans a user until a specific time
+func (r *userRepository) BanUser(userID string, until time.Time, reason string) error {
+	return r.db.Model(&model.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]interface{}{
+			"is_banned":    true,
+			"banned_until": until,
+			"ban_reason":   reason,
+		}).Error
+}
+
+// UnbanUser removes the ban from a user
+func (r *userRepository) UnbanUser(userID string) error {
+	return r.db.Model(&model.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]interface{}{
+			"is_banned":    false,
+			"banned_until": nil,
+			"ban_reason":   nil,
+		}).Error
 }

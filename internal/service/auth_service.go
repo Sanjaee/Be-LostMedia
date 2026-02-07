@@ -27,6 +27,7 @@ type AuthService interface {
 	GetMe(userID string) (*model.User, error)
 	SearchUsers(keyword string, limit, offset int) ([]model.User, error)
 	DeleteAccount(userID string, password string) error
+	UnbanUser(userID string) error
 }
 
 type authService struct {
@@ -671,6 +672,10 @@ func (s *authService) DeleteAccount(userID string, password string) error {
 	}
 
 	return s.userRepo.Delete(userID)
+}
+
+func (s *authService) UnbanUser(userID string) error {
+	return s.userRepo.UnbanUser(userID)
 }
 
 // generateOTP generates a 6-digit OTP

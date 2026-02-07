@@ -267,6 +267,19 @@ Client perlu memeriksa `data.type === "notification"` dan `data.payload?.type ==
 - User dengan `login_type: "google"` tidak perlu password.
 - Soft delete: user dihapus dengan `deleted_at` (GORM).
 
+### Ban / Blokir User (Owner Only)
+
+| Method | Endpoint                         | Keterangan                                                                        |
+|--------|----------------------------------|-----------------------------------------------------------------------------------|
+| POST   | `/api/v1/admin/users/:id/ban`    | Ban user. Body: `{ "duration": 60, "reason": "..." }` (duration dalam menit).    |
+| POST   | `/api/v1/admin/users/:id/unban`  | Unban user.                                                                       |
+
+- Hanya user dengan role `owner` yang bisa ban/unban.
+- Kolom baru pada tabel `users`: `is_banned` (bool), `banned_until` (timestamp), `ban_reason` (text).
+- User yang dibanned akan menerima response `403 Forbidden` pada setiap request (kecuali `/auth/me`).
+- Frontend menampilkan dialog fullscreen jika akun sedang dibanned, termasuk alasan dan countdown sisa waktu.
+- Ban otomatis berakhir setelah `banned_until` terlewat (auto-unban via middleware).
+
 ## Architecture
 
 Aplikasi ini menggunakan **Clean Architecture** dengan layer separation:
@@ -301,6 +314,9 @@ Table users {
   otp_expires_at   timestamp
   reset_token      text
   reset_expires_at timestamp
+  is_banned        boolean      [default: false]
+  banned_until     timestamp
+  ban_reason       text
   created_at       timestamp    [default: `now()`]
   updated_at       timestamp    [default: `now()`]
   deleted_at       timestamp

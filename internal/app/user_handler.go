@@ -3,9 +3,11 @@ package app
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"yourapp/internal/repository"
 	"yourapp/internal/util"
+	"yourapp/internal/websocket"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,12 +15,14 @@ import (
 type UserHandler struct {
 	userRepo  repository.UserRepository
 	jwtSecret string
+	wsHub     *websocket.Hub
 }
 
-func NewUserHandler(userRepo repository.UserRepository, jwtSecret string) *UserHandler {
+func NewUserHandler(userRepo repository.UserRepository, jwtSecret string, wsHub *websocket.Hub) *UserHandler {
 	return &UserHandler{
 		userRepo:  userRepo,
 		jwtSecret: jwtSecret,
+		wsHub:     wsHub,
 	}
 }
 
@@ -98,5 +102,92 @@ func (h *UserHandler) GetUserStats(c *gin.Context) {
 			"verified":   verifiedCount,
 			"unverified": unverifiedCount,
 		},
+	})
+}
+
+// BanUser handles banning a user (owner only)
+// POST /api/v1/admin/users/:id/ban
+func (h *UserHandler) BanUser(c *gin.Context) {
+	targetID := c.Param("id")
+	if targetID == "" {
+		util.BadRequest(c, "User ID is required")
+		return
+	}
+
+	// Prevent banning yourself
+	currentUserID, _ := c.Get("userID")
+	if currentUserID.(string) == targetID {
+		util.BadRequest(c, "Cannot ban yourself")
+		return
+	}
+
+	var req struct {
+		Duration int    `json:"duration" binding:"required"` // duration in minutes
+		Reason   string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		util.BadRequest(c, err.Error())
+		return
+	}
+
+	if req.Duration < 1 {
+		util.BadRequest(c, "Duration must be at least 1 minute")
+		return
+	}
+
+	// Check target user exists and is not owner
+	targetUser, err := h.userRepo.FindByID(targetID)
+	if err != nil || targetUser == nil {
+		util.NotFound(c, "User not found")
+		return
+	}
+	if targetUser.UserType == "owner" {
+		util.BadRequest(c, "Cannot ban an owner")
+		return
+	}
+
+	bannedUntil := time.Now().Add(time.Duration(req.Duration) * time.Minute)
+	reason := req.Reason
+	if reason == "" {
+		reason = "Melanggar ketentuan layanan"
+	}
+
+	if err := h.userRepo.BanUser(targetID, bannedUntil, reason); err != nil {
+		util.ErrorResponse(c, http.StatusInternalServerError, "Failed to ban user", nil)
+		return
+	}
+
+	// Broadcast ban event to the target user in real-time
+	if h.wsHub != nil {
+		h.wsHub.BroadcastToUser(targetID, map[string]interface{}{
+			"type":         "user_banned",
+			"banned_until": bannedUntil,
+			"ban_reason":   reason,
+		})
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "User banned successfully", gin.H{
+		"user_id":      targetID,
+		"banned_until": bannedUntil,
+		"reason":       reason,
+	})
+}
+
+// UnbanUser handles unbanning a user (owner only)
+// POST /api/v1/admin/users/:id/unban
+func (h *UserHandler) UnbanUser(c *gin.Context) {
+	targetID := c.Param("id")
+	if targetID == "" {
+		util.BadRequest(c, "User ID is required")
+		return
+	}
+
+	if err := h.userRepo.UnbanUser(targetID); err != nil {
+		util.ErrorResponse(c, http.StatusInternalServerError, "Failed to unban user", nil)
+		return
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "User unbanned successfully", gin.H{
+		"user_id": targetID,
 	})
 }

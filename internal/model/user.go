@@ -27,6 +27,9 @@ type User struct {
 	OTPExpiresAt   *time.Time     `gorm:"type:timestamp" json:"-"`
 	ResetToken     *string        `gorm:"type:text" json:"-"`
 	ResetExpiresAt *time.Time     `gorm:"type:timestamp" json:"-"`
+	IsBanned       bool           `gorm:"default:false" json:"is_banned"`
+	BannedUntil    *time.Time     `gorm:"type:timestamp" json:"banned_until,omitempty"`
+	BanReason      *string        `gorm:"type:text" json:"ban_reason,omitempty"`
 	CreatedAt      time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt      time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`

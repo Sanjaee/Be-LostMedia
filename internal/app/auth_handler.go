@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"yourapp/internal/service"
 	"yourapp/internal/util"
@@ -348,7 +349,7 @@ func (h *AuthHandler) SearchUsers(c *gin.Context) {
 	})
 }
 
-// AuthMiddleware validates JWT token
+// AuthMiddleware validates JWT token and checks ban status
 func (h *AuthHandler) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -376,6 +377,31 @@ func (h *AuthHandler) AuthMiddleware() gin.HandlerFunc {
 		c.Set("userID", claims.UserID)
 		c.Set("email", claims.Email)
 		c.Set("userType", claims.UserType)
+
+		// Check ban status (allow /auth/me so frontend can fetch ban info)
+		if !strings.HasSuffix(c.Request.URL.Path, "/auth/me") {
+			user, uErr := h.authService.GetMe(claims.UserID)
+			if uErr == nil && user != nil && user.IsBanned {
+				if user.BannedUntil != nil && user.BannedUntil.After(time.Now()) {
+					reason := "Melanggar ketentuan layanan"
+					if user.BanReason != nil {
+						reason = *user.BanReason
+					}
+					c.JSON(http.StatusForbidden, gin.H{
+						"success":      false,
+						"message":      "Your account is banned",
+						"is_banned":    true,
+						"banned_until": user.BannedUntil,
+						"ban_reason":   reason,
+					})
+					c.Abort()
+					return
+				}
+				// Ban expired, auto-unban
+				_ = h.authService.UnbanUser(claims.UserID)
+			}
+		}
+
 		c.Next()
 	}
 }
