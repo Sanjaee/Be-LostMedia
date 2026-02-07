@@ -287,6 +287,28 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 	util.SuccessResponse(c, http.StatusOK, "User retrieved successfully", gin.H{"user": user})
 }
 
+// DeleteAccount handles account deletion
+// DELETE /api/v1/auth/account
+func (h *AuthHandler) DeleteAccount(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		util.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"` // Required for credential login
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	if err := h.authService.DeleteAccount(userID.(string), req.Password); err != nil {
+		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "Account deleted successfully", nil)
+}
+
 // SearchUsers handles searching users by keyword
 // GET /api/v1/users/search?q=keyword&limit=20&offset=0
 func (h *AuthHandler) SearchUsers(c *gin.Context) {

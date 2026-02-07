@@ -255,6 +255,18 @@ Client perlu memeriksa `data.type === "notification"` dan `data.payload?.type ==
 3. Klik salah satu teman → muncul `ChatDialog` untuk obrolan 1:1.
 4. Kirim pesan via REST; terima pesan baru via WebSocket (`chat_message`).
 
+## Account & Settings
+
+### Delete Account
+
+| Method | Endpoint               | Keterangan                                                                 |
+|--------|------------------------|-----------------------------------------------------------------------------|
+| DELETE | `/api/v1/auth/account` | Hapus akun (protected). Body: `{ "password": "..." }` untuk login credential. |
+
+- User dengan `login_type: "credential"` wajib menyertakan password.
+- User dengan `login_type: "google"` tidak perlu password.
+- Soft delete: user dihapus dengan `deleted_at` (GORM).
+
 ## Architecture
 
 Aplikasi ini menggunakan **Clean Architecture** dengan layer separation:

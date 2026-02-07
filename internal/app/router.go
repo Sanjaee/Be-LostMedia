@@ -204,6 +204,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 
 			// Protected routes
 			auth.GET("/me", authHandler.AuthMiddleware(), authHandler.GetMe)
+			auth.DELETE("/account", authHandler.AuthMiddleware(), authHandler.DeleteAccount)
 		}
 
 		// User search routes
@@ -349,6 +350,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			chat.POST("/messages", chatHandler.SendMessage)
 			chat.GET("/messages", chatHandler.GetConversation)
 			chat.PUT("/read/:senderID", chatHandler.MarkAsRead)
+			chat.GET("/unread/by-senders", chatHandler.GetUnreadCountBySenders)
 			chat.GET("/unread/count", chatHandler.GetUnreadCount)
 		}
 	}

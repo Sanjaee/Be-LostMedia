@@ -145,3 +145,21 @@ func (h *ChatHandler) GetUnreadCount(c *gin.Context) {
 
 	util.SuccessResponse(c, http.StatusOK, "Unread count retrieved", gin.H{"count": count})
 }
+
+// GetUnreadCountBySenders returns unread count per sender (contact)
+// GET /api/v1/chat/unread/by-senders
+func (h *ChatHandler) GetUnreadCountBySenders(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		util.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	counts, err := h.chatService.GetUnreadCountBySenders(userID.(string))
+	if err != nil {
+		util.ErrorResponse(c, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "Unread counts by sender retrieved", gin.H{"counts": counts})
+}

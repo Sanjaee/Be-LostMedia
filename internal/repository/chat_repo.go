@@ -12,6 +12,7 @@ type ChatRepository interface {
 	GetConversation(senderID, receiverID string, limit, offset int) ([]*model.ChatMessage, error)
 	MarkAsRead(receiverID, senderID string) error
 	GetUnreadCount(userID string) (int64, error)
+	GetUnreadCountBySenders(userID string) (map[string]int64, error)
 }
 
 type chatRepository struct {
@@ -65,4 +66,24 @@ func (r *chatRepository) GetUnreadCount(userID string) (int64, error) {
 		Where("receiver_id = ? AND is_read = ?", userID, false).
 		Count(&count).Error
 	return count, err
+}
+
+func (r *chatRepository) GetUnreadCountBySenders(userID string) (map[string]int64, error) {
+	type row struct {
+		SenderID string `gorm:"column:sender_id"`
+		Count    int64  `gorm:"column:count"`
+	}
+	var rows []row
+	err := r.db.Raw(
+		"SELECT sender_id, count(*) as count FROM chat_messages WHERE receiver_id = ? AND is_read = ? AND deleted_at IS NULL GROUP BY sender_id",
+		userID, false,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int64)
+	for _, row := range rows {
+		result[row.SenderID] = row.Count
+	}
+	return result, nil
 }

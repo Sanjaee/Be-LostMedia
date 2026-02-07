@@ -12,6 +12,7 @@ type ChatService interface {
 	GetConversation(userID, otherUserID string, limit, offset int) ([]*model.ChatMessage, error)
 	MarkAsRead(userID, senderID string) error
 	GetUnreadCount(userID string) (int64, error)
+	GetUnreadCountBySenders(userID string) (map[string]int64, error)
 }
 
 type chatService struct {
@@ -75,4 +76,8 @@ func (s *chatService) MarkAsRead(userID, senderID string) error {
 
 func (s *chatService) GetUnreadCount(userID string) (int64, error) {
 	return s.chatRepo.GetUnreadCount(userID)
+}
+
+func (s *chatService) GetUnreadCountBySenders(userID string) (map[string]int64, error) {
+	return s.chatRepo.GetUnreadCountBySenders(userID)
 }

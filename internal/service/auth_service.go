@@ -26,6 +26,7 @@ type AuthService interface {
 	VerifyEmail(token string) (*AuthResponse, error)
 	GetMe(userID string) (*model.User, error)
 	SearchUsers(keyword string, limit, offset int) ([]model.User, error)
+	DeleteAccount(userID string, password string) error
 }
 
 type authService struct {
@@ -650,6 +651,26 @@ func (s *authService) SearchUsers(keyword string, limit, offset int) ([]model.Us
 	}
 
 	return s.userRepo.SearchUsers(keyword, limit, offset)
+}
+
+// DeleteAccount soft-deletes the user account
+func (s *authService) DeleteAccount(userID string, password string) error {
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil || user == nil {
+		return errors.New("user not found")
+	}
+
+	// For credential login, verify password
+	if user.LoginType == "credential" && user.PasswordHash != "" {
+		if password == "" {
+			return errors.New("password required to delete account")
+		}
+		if !util.CheckPasswordHash(password, user.PasswordHash) {
+			return errors.New("invalid password")
+		}
+	}
+
+	return s.userRepo.Delete(userID)
 }
 
 // generateOTP generates a 6-digit OTP

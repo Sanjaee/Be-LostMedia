@@ -25,6 +25,7 @@ type UserRepository interface {
 	FindByResetToken(token string) (*model.User, error)
 	UpdatePassword(userID string, passwordHash string) error
 	UpdateLastLogin(userID string) error
+	Delete(userID string) error
 }
 
 type userRepository struct {
@@ -190,4 +191,9 @@ func (r *userRepository) Count() (int64, error) {
 	var count int64
 	err := r.db.Model(&model.User{}).Count(&count).Error
 	return count, err
+}
+
+// Delete soft-deletes a user by ID
+func (r *userRepository) Delete(userID string) error {
+	return r.db.Where("id = ?", userID).Delete(&model.User{}).Error
 }
