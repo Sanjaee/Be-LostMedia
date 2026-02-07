@@ -3,6 +3,7 @@ package app
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"yourapp/internal/repository"
@@ -189,5 +190,55 @@ func (h *UserHandler) UnbanUser(c *gin.Context) {
 
 	util.SuccessResponse(c, http.StatusOK, "User unbanned successfully", gin.H{
 		"user_id": targetID,
+	})
+}
+
+var allowedRoles = map[string]bool{
+	"owner": true, "admin": true, "mod": true, "mvp": true, "god": true, "vip": true, "member": true,
+}
+
+// UpdateUserRole handles updating a user's role (owner only)
+// PUT /api/v1/admin/users/:id/role
+func (h *UserHandler) UpdateUserRole(c *gin.Context) {
+	targetID := c.Param("id")
+	if targetID == "" {
+		util.BadRequest(c, "User ID is required")
+		return
+	}
+
+	var req struct {
+		Role string `json:"role" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		util.BadRequest(c, "Role is required")
+		return
+	}
+
+	role := strings.ToLower(strings.TrimSpace(req.Role))
+	if !allowedRoles[role] {
+		util.BadRequest(c, "Invalid role. Allowed: owner, admin, mod, mvp, god, vip, member")
+		return
+	}
+
+	currentUserID, _ := c.Get("userID")
+	if currentUserID.(string) == targetID {
+		util.BadRequest(c, "Cannot change your own role")
+		return
+	}
+
+	targetUser, err := h.userRepo.FindByID(targetID)
+	if err != nil || targetUser == nil {
+		util.ErrorResponse(c, http.StatusNotFound, "User not found", nil)
+		return
+	}
+
+	if err := h.userRepo.UpdateUserRole(targetID, role); err != nil {
+		util.ErrorResponse(c, http.StatusInternalServerError, "Failed to update role", nil)
+		return
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "Role updated successfully", gin.H{
+		"user_id": targetID,
+		"role":    role,
 	})
 }

@@ -28,6 +28,7 @@ type UserRepository interface {
 	Delete(userID string) error
 	BanUser(userID string, until time.Time, reason string) error
 	UnbanUser(userID string) error
+	UpdateUserRole(userID string, role string) error
 }
 
 type userRepository struct {
@@ -220,4 +221,11 @@ func (r *userRepository) UnbanUser(userID string) error {
 			"banned_until": nil,
 			"ban_reason":   nil,
 		}).Error
+}
+
+// UpdateUserRole updates a user's role (user_type)
+func (r *userRepository) UpdateUserRole(userID string, role string) error {
+	return r.db.Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("user_type", role).Error
 }

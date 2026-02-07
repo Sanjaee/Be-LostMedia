@@ -226,6 +226,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 				admin.GET("/stats", userHandler.GetUserStats)
 				admin.POST("/users/:id/ban", userHandler.BanUser)
 				admin.POST("/users/:id/unban", userHandler.UnbanUser)
+				admin.PUT("/users/:id/role", userHandler.UpdateUserRole)
 			}
 		}
 
