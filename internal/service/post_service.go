@@ -222,7 +222,7 @@ func (s *postService) UpdatePost(userID string, postID string, req UpdatePostReq
 	return s.postRepo.FindByID(post.ID)
 }
 
-// DeletePost deletes a post
+// DeletePost deletes a post (owner or admin can delete)
 func (s *postService) DeletePost(userID string, postID string) error {
 	// Get existing post
 	post, err := s.postRepo.FindByID(postID)
@@ -232,7 +232,16 @@ func (s *postService) DeletePost(userID string, postID string) error {
 
 	// Check if user owns this post
 	if post.UserID != userID {
-		return errors.New("unauthorized: you can only delete your own posts")
+		// If not owner, check if user is admin
+		user, err := s.userRepo.FindByID(userID)
+		if err != nil {
+			return errors.New("user not found")
+		}
+		
+		// Only admin can delete other users' posts
+		if user.UserType != "admin" {
+			return errors.New("unauthorized: you can only delete your own posts")
+		}
 	}
 
 	if err := s.postRepo.Delete(postID); err != nil {
