@@ -137,19 +137,28 @@ func (PostLocation) TableName() string {
 	return "post_locations"
 }
 
-// Group model (placeholder - will be implemented later)
+// Group model
 type Group struct {
-	ID          string         `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	CreatedBy   string         `gorm:"type:uuid;not null;references:users(id)" json:"created_by"`
-	Name        string         `gorm:"type:varchar(255);not null" json:"name"`
-	Description *string        `gorm:"type:text" json:"description,omitempty"`
-	CoverPhoto  *string        `gorm:"type:text" json:"cover_photo,omitempty"`
-	Icon        *string        `gorm:"type:text" json:"icon,omitempty"`
-	Privacy     string         `gorm:"type:varchar(20);default:'open'" json:"privacy"`
-	IsActive    bool           `gorm:"default:true" json:"is_active"`
-	CreatedAt   time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt   time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	ID               string         `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	CreatedBy        string         `gorm:"type:uuid;not null;references:users(id)" json:"created_by"`
+	Name             string         `gorm:"type:varchar(255);not null" json:"name"`
+	Slug             string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"slug"`
+	Description      *string        `gorm:"type:text" json:"description,omitempty"`
+	CoverPhoto       *string        `gorm:"type:text" json:"cover_photo,omitempty"`
+	Icon             *string        `gorm:"type:text" json:"icon,omitempty"`
+	Privacy          string         `gorm:"type:varchar(20);default:'open'" json:"privacy"`               // open, closed, secret
+	MembershipPolicy string         `gorm:"type:varchar(30);default:'anyone_can_join'" json:"membership_policy"` // anyone_can_join, approval_required
+	IsActive         bool           `gorm:"default:true" json:"is_active"`
+	CreatedAt        time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt        time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
+
+	// Relationships
+	Creator User          `gorm:"foreignKey:CreatedBy;references:ID" json:"creator,omitempty"`
+	Members []GroupMember `gorm:"foreignKey:GroupID;references:ID" json:"members,omitempty"`
+
+	// Computed
+	MembersCount int64 `json:"members_count,omitempty" gorm:"-"`
 }
 
 // BeforeCreate hook to generate UUID
@@ -163,4 +172,32 @@ func (g *Group) BeforeCreate(tx *gorm.DB) error {
 // TableName specifies the table name
 func (Group) TableName() string {
 	return "groups"
+}
+
+// GroupMember represents a user's membership in a group
+type GroupMember struct {
+	ID        string    `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	GroupID   string    `gorm:"type:uuid;not null;index:idx_group_member,unique" json:"group_id"`
+	UserID    string    `gorm:"type:uuid;not null;index:idx_group_member,unique" json:"user_id"`
+	Role      string    `gorm:"type:varchar(20);default:'member'" json:"role"` // admin, moderator, member
+	Status    string    `gorm:"type:varchar(20);default:'active'" json:"status"` // active, pending, banned
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+
+	// Relationships
+	Group Group `gorm:"foreignKey:GroupID;references:ID" json:"group,omitempty"`
+	User  User  `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
+}
+
+// BeforeCreate hook to generate UUID
+func (gm *GroupMember) BeforeCreate(tx *gorm.DB) error {
+	if gm.ID == "" {
+		gm.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// TableName specifies the table name
+func (GroupMember) TableName() string {
+	return "group_members"
 }

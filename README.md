@@ -358,6 +358,7 @@ Table groups {
   id                uuid      [pk, default: `gen_random_uuid()`]
   created_by        uuid      [not null, ref: > users.id]
   name              varchar(255) [not null]
+  slug              varchar(255) [unique, not null]
   description       text
   cover_photo       text
   icon              text
@@ -367,6 +368,20 @@ Table groups {
   created_at        timestamp [default: `now()`]
   updated_at        timestamp [default: `now()`]
   deleted_at        timestamp
+}
+
+Table group_members {
+  id          uuid      [pk, default: `gen_random_uuid()`]
+  group_id    uuid      [not null, ref: > groups.id]
+  user_id     uuid      [not null, ref: > users.id]
+  role        varchar(20) [default: 'member']
+  status      varchar(20) [default: 'active']
+  created_at  timestamp [default: `now()`]
+  updated_at  timestamp [default: `now()`]
+
+  indexes {
+    (group_id, user_id) [unique]
+  }
 }
 
 Table posts {

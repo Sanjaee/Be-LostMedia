@@ -46,7 +46,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	}
 
 	// Auto migrate
-	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.Comment{}, &model.Like{}, &model.PostView{}, &model.ChatMessage{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.GroupMember{}, &model.Comment{}, &model.Like{}, &model.PostView{}, &model.ChatMessage{}); err != nil {
 		panic("Failed to migrate database: " + err.Error())
 	}
 
@@ -67,6 +67,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	commentRepo := repository.NewCommentRepository(db, redisClient)
 	likeRepo := repository.NewLikeRepository(db, redisClient)
 	chatRepo := repository.NewChatRepository(db)
+	groupRepo := repository.NewGroupRepository(db, redisClient)
 
 	// Initialize RabbitMQ with retry logic
 	rabbitMQ := initRabbitMQWithRetry(cfg)
@@ -144,6 +145,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	commentService := service.NewCommentService(commentRepo, userRepo, postRepo, notificationService)
 	likeService := service.NewLikeService(likeRepo, userRepo, postRepo, commentRepo)
 	chatService := service.NewChatService(chatRepo, userRepo, friendshipRepo)
+	groupService := service.NewGroupService(groupRepo, userRepo)
 
 	// Initialize notification worker if RabbitMQ is available
 	// TODO: Re-enable RabbitMQ worker later for async processing
@@ -184,6 +186,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	commentHandler := NewCommentHandler(commentService, cfg.JWTSecret)
 	likeHandler := NewLikeHandlerWithNotification(likeService, notificationService, postService, userRepo, cfg.JWTSecret)
 	chatHandler := NewChatHandler(chatService, wsHub)
+	groupHandler := NewGroupHandler(groupService, cloudinaryClient, cfg.JWTSecret)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -355,6 +358,34 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			chat.PUT("/read/:senderID", chatHandler.MarkAsRead)
 			chat.GET("/unread/by-senders", chatHandler.GetUnreadCountBySenders)
 			chat.GET("/unread/count", chatHandler.GetUnreadCount)
+		}
+
+		// Group routes
+		groups := api.Group("/groups")
+		{
+			// Public routes (can view groups without auth)
+			groups.GET("", groupHandler.ListGroups)
+			groups.GET("/search", groupHandler.SearchGroups)
+			groups.GET("/:id/members", groupHandler.GetMembers)
+
+			// Protected routes
+			groups.Use(authHandler.AuthMiddleware())
+			{
+				groups.POST("", groupHandler.CreateGroup)
+				groups.POST("/upload", groupHandler.CreateGroupWithCover)
+				groups.GET("/my", groupHandler.GetMyGroups)
+				groups.GET("/slug/:slug", groupHandler.GetGroupBySlug)
+				groups.GET("/:id", groupHandler.GetGroup)
+				groups.PUT("/:id", groupHandler.UpdateGroup)
+				groups.DELETE("/:id", groupHandler.DeleteGroup)
+				groups.PUT("/:id/cover", groupHandler.UpdateGroupCover)
+
+				// Membership
+				groups.POST("/:id/join", groupHandler.JoinGroup)
+				groups.POST("/:id/leave", groupHandler.LeaveGroup)
+				groups.PUT("/:id/members/:userID/role", groupHandler.UpdateMemberRole)
+				groups.DELETE("/:id/members/:userID", groupHandler.RemoveMember)
+			}
 		}
 	}
 
