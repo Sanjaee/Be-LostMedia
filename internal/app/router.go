@@ -210,12 +210,13 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			auth.DELETE("/account", authHandler.AuthMiddleware(), authHandler.DeleteAccount)
 		}
 
-		// User search routes
+		// User routes
 		users := api.Group("/users")
 		{
 			users.Use(authHandler.AuthMiddleware())
 			{
 				users.GET("/search", authHandler.SearchUsers)
+				users.GET("/online", userHandler.GetOnlineUsers)
 			}
 		}
 

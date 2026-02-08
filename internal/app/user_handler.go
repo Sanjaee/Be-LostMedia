@@ -30,6 +30,40 @@ func NewUserHandler(userRepo repository.UserRepository, jwtSecret string, wsHub 
 	}
 }
 
+// GetOnlineUsers returns the list of currently online users with basic info
+// GET /api/v1/users/online
+func (h *UserHandler) GetOnlineUsers(c *gin.Context) {
+	onlineIDs := h.wsHub.GetOnlineUserIDs()
+
+	type OnlineUser struct {
+		ID           string  `json:"id"`
+		FullName     string  `json:"full_name"`
+		Username     *string `json:"username,omitempty"`
+		ProfilePhoto *string `json:"profile_photo,omitempty"`
+		UserType     string  `json:"user_type"`
+	}
+
+	users := make([]OnlineUser, 0, len(onlineIDs))
+	for _, uid := range onlineIDs {
+		user, err := h.userRepo.FindByID(uid)
+		if err != nil || !user.IsActive || user.IsBanned {
+			continue
+		}
+		users = append(users, OnlineUser{
+			ID:           user.ID,
+			FullName:     user.FullName,
+			Username:     user.Username,
+			ProfilePhoto: user.ProfilePhoto,
+			UserType:     user.UserType,
+		})
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "Online users retrieved", gin.H{
+		"users": users,
+		"count": len(users),
+	})
+}
+
 // GetAllUsers handles getting all users (owner only)
 // GET /api/v1/admin/users
 func (h *UserHandler) GetAllUsers(c *gin.Context) {
