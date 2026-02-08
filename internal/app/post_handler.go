@@ -444,9 +444,9 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 		return
 	}
 
-	// Validate maximum 3 images
-	if len(files) > 3 {
-		util.BadRequest(c, "Maximum 3 images allowed")
+	// Validate maximum 10 images
+	if len(files) > 10 {
+		util.BadRequest(c, "Maximum 10 images allowed")
 		return
 	}
 
