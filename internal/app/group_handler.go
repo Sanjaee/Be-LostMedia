@@ -374,12 +374,17 @@ func (h *GroupHandler) LeaveGroup(c *gin.Context) {
 		return
 	}
 
-	if err := h.groupService.LeaveGroup(userID.(string), groupID); err != nil {
+	deleted, err := h.groupService.LeaveGroup(userID.(string), groupID)
+	if err != nil {
 		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	util.SuccessResponse(c, http.StatusOK, "Left group successfully", nil)
+	payload := gin.H{}
+	if deleted {
+		payload["deleted"] = true
+	}
+	util.SuccessResponse(c, http.StatusOK, "Left group successfully", payload)
 }
 
 // GetMembers handles getting group members

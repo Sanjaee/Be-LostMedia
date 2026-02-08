@@ -236,7 +236,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		// Profile routes
 		profiles := api.Group("/profiles")
 		{
-			// Public routes
+			// Public routes (username before :id to avoid conflict)
+			profiles.GET("/username/:username", profileHandler.GetProfileByUsername)
 			profiles.GET("/:id", profileHandler.GetProfile)
 			profiles.GET("/user/:userID", profileHandler.GetProfileByUserID)
 

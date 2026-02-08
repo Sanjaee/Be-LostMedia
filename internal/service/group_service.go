@@ -22,7 +22,7 @@ type GroupService interface {
 
 	// Membership
 	JoinGroup(userID, groupID string) (*model.GroupMember, error)
-	LeaveGroup(userID, groupID string) error
+	LeaveGroup(userID, groupID string) (deleted bool, err error)
 	GetMembers(groupID string, limit, offset int) ([]model.GroupMember, int64, error)
 	GetMember(groupID, userID string) (*model.GroupMember, error)
 	UpdateMemberRole(adminID, groupID, targetUserID, role string) error
@@ -124,6 +124,12 @@ func (s *groupService) CreateGroup(userID string, req CreateGroupRequest) (*mode
 	}
 
 	if err := s.groupRepo.CreateGroup(group); err != nil {
+		// Return user-friendly message for duplicate slug (name already in use)
+		if strings.Contains(err.Error(), "groups_slug_key") ||
+			strings.Contains(err.Error(), "duplicate key") ||
+			strings.Contains(err.Error(), "23505") {
+			return nil, errors.New("nama grup sudah digunakan")
+		}
 		return nil, fmt.Errorf("failed to create group: %w", err)
 	}
 
@@ -264,13 +270,13 @@ func (s *groupService) JoinGroup(userID, groupID string) (*model.GroupMember, er
 	return member, nil
 }
 
-func (s *groupService) LeaveGroup(userID, groupID string) error {
+func (s *groupService) LeaveGroup(userID, groupID string) (bool, error) {
 	member, err := s.groupRepo.GetMember(groupID, userID)
 	if err != nil {
-		return errors.New("you are not a member of this group")
+		return false, errors.New("you are not a member of this group")
 	}
 
-	// Admin cannot leave if they are the only admin
+	// If admin is the only admin, delete the group when they leave
 	if member.Role == "admin" {
 		members, _, _ := s.groupRepo.GetMembers(groupID, 1000, 0)
 		adminCount := 0
@@ -280,11 +286,12 @@ func (s *groupService) LeaveGroup(userID, groupID string) error {
 			}
 		}
 		if adminCount <= 1 {
-			return errors.New("you are the only admin. Please assign another admin before leaving")
+			err := s.groupRepo.DeleteGroup(groupID)
+			return err == nil, err
 		}
 	}
 
-	return s.groupRepo.RemoveMember(groupID, userID)
+	return false, s.groupRepo.RemoveMember(groupID, userID)
 }
 
 func (s *groupService) GetMembers(groupID string, limit, offset int) ([]model.GroupMember, int64, error) {

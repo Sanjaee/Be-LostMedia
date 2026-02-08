@@ -63,6 +63,24 @@ func (h *ProfileHandler) GetProfile(c *gin.Context) {
 	util.SuccessResponse(c, http.StatusOK, "Profile retrieved successfully", gin.H{"profile": profile})
 }
 
+// GetProfileByUsername handles getting a profile by username (slug)
+// GET /api/v1/profiles/username/:username
+func (h *ProfileHandler) GetProfileByUsername(c *gin.Context) {
+	username := c.Param("username")
+	if username == "" {
+		util.BadRequest(c, "Username is required")
+		return
+	}
+
+	profile, err := h.profileService.GetProfileByUsername(username)
+	if err != nil {
+		util.NotFound(c, err.Error())
+		return
+	}
+
+	util.SuccessResponse(c, http.StatusOK, "Profile retrieved successfully", gin.H{"profile": profile})
+}
+
 // GetProfileByUserID handles getting a profile by user ID
 // GET /api/v1/profiles/user/:userID
 func (h *ProfileHandler) GetProfileByUserID(c *gin.Context) {

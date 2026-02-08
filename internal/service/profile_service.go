@@ -12,6 +12,7 @@ type ProfileService interface {
 	CreateProfile(userID string, req CreateProfileRequest) (*model.Profile, error)
 	GetProfileByID(profileID string) (*model.Profile, error)
 	GetProfileByUserID(userID string) (*model.Profile, error)
+	GetProfileByUsername(username string) (*model.Profile, error)
 	UpdateProfile(userID string, profileID string, req UpdateProfileRequest) (*model.Profile, error)
 	DeleteProfile(userID string, profileID string) error
 	GetMyProfile(userID string) (*model.Profile, error)
@@ -156,6 +157,15 @@ func (s *profileService) GetProfileByUserID(userID string) (*model.Profile, erro
 	}
 
 	return profile, nil
+}
+
+// GetProfileByUsername retrieves a profile by user username (slug)
+func (s *profileService) GetProfileByUsername(username string) (*model.Profile, error) {
+	user, err := s.userRepo.FindByUsername(username)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+	return s.GetProfileByUserID(user.ID)
 }
 
 // GetMyProfile retrieves the current user's profile
