@@ -19,6 +19,7 @@ type PostHandler struct {
 	cloudinaryClient    *util.CloudinaryClient
 	wsHub               interface {
 		BroadcastToUser(string, map[string]interface{})
+		BroadcastToAll(map[string]interface{})
 	}
 	likeService    service.LikeService
 	commentService service.CommentService
@@ -39,6 +40,7 @@ func NewPostHandlerWithCloudinary(
 	cloudinaryClient *util.CloudinaryClient,
 	wsHub interface {
 		BroadcastToUser(string, map[string]interface{})
+		BroadcastToAll(map[string]interface{})
 	},
 	likeService service.LikeService,
 	commentService service.CommentService,
@@ -75,6 +77,14 @@ func (h *PostHandler) CreatePost(c *gin.Context) {
 	if err != nil {
 		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
 		return
+	}
+
+	// Broadcast new post to all connected clients for real-time feed
+	if h.wsHub != nil {
+		h.wsHub.BroadcastToAll(map[string]interface{}{
+			"type":    "new_post",
+			"post_id": post.ID,
+		})
 	}
 
 	util.SuccessResponse(c, http.StatusCreated, "Post created successfully", gin.H{"post": post})
@@ -472,8 +482,14 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 		return
 	}
 
-	// If no images, return immediately
+	// If no images, broadcast and return immediately
 	if len(files) == 0 {
+		if h.wsHub != nil {
+			h.wsHub.BroadcastToAll(map[string]interface{}{
+				"type":    "new_post",
+				"post_id": post.ID,
+			})
+		}
 		util.SuccessResponse(c, http.StatusCreated, "Post created successfully", gin.H{"post": post})
 		return
 	}
@@ -521,6 +537,13 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 		// Send notification to user that upload is completed (saves to DB and sends via WebSocket)
 		if h.notificationService != nil {
 			_ = h.notificationService.SendPostUploadCompletedNotification(userID.(string), updatedPost.ID, len(imageURLs))
+		}
+		// Broadcast new post to all clients so feed updates in real time
+		if h.wsHub != nil {
+			h.wsHub.BroadcastToAll(map[string]interface{}{
+				"type":    "new_post",
+				"post_id": updatedPost.ID,
+			})
 		}
 	}()
 
