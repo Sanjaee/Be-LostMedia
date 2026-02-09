@@ -17,12 +17,27 @@ import (
 type AuthHandler struct {
 	authService service.AuthService
 	jwtSecret   string
+	wsHub       interface {
+		BroadcastToAll(map[string]interface{})
+	}
 }
 
 func NewAuthHandler(authService service.AuthService, jwtSecret string) *AuthHandler {
 	return &AuthHandler{
 		authService: authService,
 		jwtSecret:   jwtSecret,
+		wsHub:       nil,
+	}
+}
+
+// NewAuthHandlerWithWS creates AuthHandler with WebSocket hub for real-time new user broadcast (admin)
+func NewAuthHandlerWithWS(authService service.AuthService, jwtSecret string, wsHub interface {
+	BroadcastToAll(map[string]interface{})
+}) *AuthHandler {
+	return &AuthHandler{
+		authService: authService,
+		jwtSecret:   jwtSecret,
+		wsHub:       wsHub,
 	}
 }
 
@@ -39,6 +54,18 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if err != nil {
 		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
 		return
+	}
+
+	// Broadcast new_user so admin dashboard can show new users in real time
+	if h.wsHub != nil && resp.User != nil {
+		h.wsHub.BroadcastToAll(map[string]interface{}{
+			"type":    "new_user",
+			"user_id": resp.User.ID,
+			"email":   resp.User.Email,
+			"full_name": resp.User.FullName,
+			"user_type": resp.User.UserType,
+			"created_at": resp.User.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
 	}
 
 	util.SuccessResponse(c, http.StatusCreated, resp.Message, resp)

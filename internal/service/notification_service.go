@@ -138,9 +138,11 @@ func (s *notificationService) sendNotification(
 			"type":       notification.Type,
 			"title":      notification.Title,
 			"message":    notification.Message,
-			"target_id":  notification.TargetID,
 			"is_read":    notification.IsRead,
 			"created_at": notification.CreatedAt.Format(time.RFC3339),
+		}
+		if notification.TargetID != nil {
+			wsPayload["target_id"] = *notification.TargetID
 		}
 
 		// Add sender_id if available

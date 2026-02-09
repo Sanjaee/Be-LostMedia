@@ -70,10 +70,12 @@ func (r *postRepository) Create(post *model.Post) error {
 		if post.GroupID != nil {
 			r.invalidateGroupCountCache(*post.GroupID)
 		}
-		// Add to engagement sorted set with initial score 0 (only for non-group posts)
+		// Add to engagement sorted set with high initial score so new posts appear at top
+		// (only for non-group posts). Score decays as engagement is updated.
 		if post.GroupID == nil {
 			tieBreakScore := float64(post.CreatedAt.Unix()) / 1000000.0
-			r.redis.ZAdd(postEngagementSortedSetKey, tieBreakScore, post.ID)
+			initialScore := 1e12 + tieBreakScore // new posts on top until engagement updates
+			r.redis.ZAdd(postEngagementSortedSetKey, initialScore, post.ID)
 			r.redis.Set(postEngagementScorePrefix+post.ID, "0", postEngagementCacheExpiration)
 		}
 	}
@@ -271,10 +273,14 @@ func (r *postRepository) FindFeedByEngagement(userID string, limit, offset int) 
 					fmt.Sscanf(cachedScore, "%f", &score)
 				}
 
-				// Add to sorted set with score
-				// Use negative timestamp for tie-breaking (newer posts have higher priority)
-				tieBreakScore := float64(post.CreatedAt.Unix()) / 1000000.0 // Normalize to small value
-				finalScore := score*1000000.0 + tieBreakScore               // Multiply by large number to prioritize engagement
+				// Add to sorted set with score; newness boost so new posts appear at top
+				tieBreakScore := float64(post.CreatedAt.Unix()) / 1000000.0
+				hoursSinceCreated := time.Since(post.CreatedAt).Hours()
+				newnessBoost := 0.0
+				if hoursSinceCreated < 48 {
+					newnessBoost = (48 - hoursSinceCreated) * 1e8
+				}
+				finalScore := score*1000000.0 + newnessBoost + tieBreakScore
 				pipe.ZAdd(ctx, postEngagementSortedSetKey, redis.Z{
 					Score:  finalScore,
 					Member: post.ID,
@@ -335,11 +341,13 @@ func (r *postRepository) FindFeedByEngagement(userID string, limit, offset int) 
 	return result, nil
 }
 
-// findFeedByEngagementFallback is fallback method when Redis is not available
+// findFeedByEngagementFallback is fallback method when Redis is not available.
+// Uses same newness boost so new posts appear at top.
 func (r *postRepository) findFeedByEngagementFallback(posts []*model.Post, limit, offset int) ([]*model.Post, error) {
 	type PostWithScore struct {
-		Post  *model.Post
-		Score int64
+		Post         *model.Post
+		Score        int64
+		NewnessBoost float64
 	}
 
 	postsWithScore := make([]PostWithScore, 0, len(posts))
@@ -358,17 +366,25 @@ func (r *postRepository) findFeedByEngagementFallback(posts []*model.Post, limit
 			Count(&viewCount)
 
 		score := (likeCount * 2) + (commentCount * 3) + (viewCount * 1)
+		hoursSinceCreated := time.Since(post.CreatedAt).Hours()
+		newnessBoost := 0.0
+		if hoursSinceCreated < 48 {
+			newnessBoost = (48 - hoursSinceCreated) * 1e8
+		}
 
 		postsWithScore = append(postsWithScore, PostWithScore{
-			Post:  post,
-			Score: score,
+			Post:         post,
+			Score:        score,
+			NewnessBoost: newnessBoost,
 		})
 	}
 
-	// Use sort.Slice for better performance
+	// Sort by engagement + newness (new posts at top), then by created_at
 	sort.Slice(postsWithScore, func(i, j int) bool {
-		if postsWithScore[i].Score != postsWithScore[j].Score {
-			return postsWithScore[i].Score > postsWithScore[j].Score
+		combinedI := float64(postsWithScore[i].Score) + postsWithScore[i].NewnessBoost
+		combinedJ := float64(postsWithScore[j].Score) + postsWithScore[j].NewnessBoost
+		if combinedI != combinedJ {
+			return combinedI > combinedJ
 		}
 		return postsWithScore[i].Post.CreatedAt.After(postsWithScore[j].Post.CreatedAt)
 	})
@@ -390,8 +406,9 @@ func (r *postRepository) findFeedByEngagementFallback(posts []*model.Post, limit
 	return result, nil
 }
 
-// UpdatePostEngagementScore updates the engagement score for a post in Redis
-// This is called when likes, comments, or views change
+// UpdatePostEngagementScore updates the engagement score for a post in Redis.
+// This is called when likes, comments, or views change (e.g. from post_view_service).
+// Newer posts get a time-based boost so they appear at top initially.
 func (r *postRepository) UpdatePostEngagementScore(postID string) {
 	if r.redis == nil {
 		return
@@ -412,19 +429,26 @@ func (r *postRepository) UpdatePostEngagementScore(postID string) {
 	// Calculate engagement score
 	score := float64((likeCount * 2) + (commentCount * 3) + (viewCount * 1))
 
-	// Get post for created_at
+	// Get post for created_at (for newness boost)
 	var post model.Post
 	if err := r.db.Where("id = ?", postID).First(&post).Error; err != nil {
 		return
 	}
 
+	tieBreakScore := float64(post.CreatedAt.Unix()) / 1000000.0
+	// Newness boost: posts from last 48h get extra score so they stay near top
+	hoursSinceCreated := time.Since(post.CreatedAt).Hours()
+	newnessBoost := 0.0
+	if hoursSinceCreated < 48 {
+		newnessBoost = (48 - hoursSinceCreated) * 1e8 // decays over 48h
+	}
+	finalScore := score*1000000.0 + newnessBoost + tieBreakScore
+
 	// Update cached score
 	scoreKey := postEngagementScorePrefix + postID
 	r.redis.Set(scoreKey, fmt.Sprintf("%.0f", score), postEngagementCacheExpiration)
 
-	// Update sorted set
-	tieBreakScore := float64(post.CreatedAt.Unix()) / 1000000.0
-	finalScore := score*1000000.0 + tieBreakScore
+	// Update sorted set (higher score = higher in feed)
 	r.redis.ZAdd(postEngagementSortedSetKey, finalScore, postID)
 }
 

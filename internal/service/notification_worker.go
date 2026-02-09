@@ -134,11 +134,24 @@ func (w *NotificationWorker) processNotificationMessage(msg amqp.Delivery) error
 	}
 
 	// Push to WebSocket hub for realtime delivery
+	// BroadcastToUser already wraps as {type:"notification", payload:...}
+	// so we pass the notification data directly — no extra wrapping
 	if w.wsHub != nil {
-		w.wsHub.BroadcastToUser(notificationMsg.UserID, map[string]interface{}{
-			"type":    "notification",
-			"payload": notificationMsg,
-		})
+		payload := map[string]interface{}{
+			"type":    notificationMsg.Type,
+			"user_id": notificationMsg.UserID,
+		}
+		// Copy all fields from notificationMsg into payload
+		msgBytes, err := json.Marshal(notificationMsg)
+		if err == nil {
+			var msgMap map[string]interface{}
+			if json.Unmarshal(msgBytes, &msgMap) == nil {
+				for k, v := range msgMap {
+					payload[k] = v
+				}
+			}
+		}
+		w.wsHub.BroadcastToUser(notificationMsg.UserID, payload)
 		log.Printf("Notification pushed to WebSocket for user: %s, type: %s", notificationMsg.UserID, notificationMsg.Type)
 	}
 

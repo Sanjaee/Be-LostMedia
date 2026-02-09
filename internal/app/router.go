@@ -161,8 +161,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	*/
 	// For now, notifications are sent directly via WebSocket (no RabbitMQ)
 
-	// Initialize handlers
-	authHandler := NewAuthHandler(authService, cfg.JWTSecret)
+	// Initialize handlers (auth with WS so admin gets real-time new_user)
+	authHandler := NewAuthHandlerWithWS(authService, cfg.JWTSecret, wsHub)
 	userHandler := NewUserHandler(userRepo, cfg.JWTSecret, wsHub, notificationService)
 	profileHandler := NewProfileHandler(profileService, cfg.JWTSecret)
 	friendshipHandler := NewFriendshipHandler(friendshipService, cfg.JWTSecret)

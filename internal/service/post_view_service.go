@@ -62,7 +62,8 @@ func (s *postViewService) TrackView(userID, postID string) error {
 		return fmt.Errorf("failed to track view: %w", err)
 	}
 
-	// Update engagement score in Redis (only if new view, not duplicate)
+	// Update engagement score in Redis (only if new view, not duplicate).
+	// Repository applies newness boost so new posts appear at top (post baru muncul paling atas).
 	if existingView == nil {
 		s.postRepo.UpdatePostEngagementScore(postID)
 	}
