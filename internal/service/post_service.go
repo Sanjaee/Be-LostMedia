@@ -31,6 +31,7 @@ type postService struct {
 type CreatePostRequest struct {
 	Content      *string                `json:"content,omitempty"`
 	ImageURLs    []string               `json:"image_urls,omitempty"` // Array of image URLs
+	VideoURLs    []string               `json:"video_urls,omitempty"` // Array of video URLs
 	SharedPostID *string                `json:"shared_post_id,omitempty"`
 	GroupID      *string                `json:"group_id,omitempty"`
 	IsPinned     *bool                  `json:"is_pinned,omitempty"`
@@ -47,6 +48,7 @@ type CreateLocationRequest struct {
 type UpdatePostRequest struct {
 	Content   *string  `json:"content,omitempty"`
 	ImageURLs []string `json:"image_urls,omitempty"` // Array of image URLs
+	VideoURLs []string `json:"video_urls,omitempty"` // Array of video URLs
 	IsPinned  *bool    `json:"is_pinned,omitempty"`
 }
 
@@ -87,8 +89,19 @@ func (s *postService) CreatePost(userID string, req CreatePostRequest) (*model.P
 		}
 		imageURLsJSON = string(imageURLsBytes)
 	} else {
-		// Use empty JSON array for empty image URLs
 		imageURLsJSON = "[]"
+	}
+
+	// Serialize VideoURLs array to JSON string
+	var videoURLsJSON string
+	if len(req.VideoURLs) > 0 {
+		videoURLsBytes, err := json.Marshal(req.VideoURLs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize video URLs: %w", err)
+		}
+		videoURLsJSON = string(videoURLsBytes)
+	} else {
+		videoURLsJSON = "[]"
 	}
 
 	// Create post
@@ -96,6 +109,7 @@ func (s *postService) CreatePost(userID string, req CreatePostRequest) (*model.P
 		UserID:       userID,
 		Content:      req.Content,
 		ImageURLs:    imageURLsJSON,
+		VideoURLs:    videoURLsJSON,
 		SharedPostID: req.SharedPostID,
 		GroupID:      req.GroupID,
 		IsPinned:     false,
@@ -105,9 +119,9 @@ func (s *postService) CreatePost(userID string, req CreatePostRequest) (*model.P
 		post.IsPinned = *req.IsPinned
 	}
 
-	// Validate: must have either content or image URLs
-	if (req.Content == nil || *req.Content == "") && len(req.ImageURLs) == 0 {
-		return nil, errors.New("post must have either content or image URLs")
+	// Validate: must have either content, image URLs, or video URLs
+	if (req.Content == nil || *req.Content == "") && len(req.ImageURLs) == 0 && len(req.VideoURLs) == 0 {
+		return nil, errors.New("post must have either content, image URLs, or video URLs")
 	}
 
 	if err := s.postRepo.Create(post); err != nil {
@@ -207,12 +221,32 @@ func (s *postService) UpdatePost(userID string, postID string, req UpdatePostReq
 			}
 			post.ImageURLs = string(imageURLsBytes)
 		} else {
-			// Use empty JSON array for PostgreSQL JSONB compatibility
 			post.ImageURLs = "[]"
+		}
+	}
+	if req.VideoURLs != nil {
+		if len(req.VideoURLs) > 0 {
+			videoURLsBytes, err := json.Marshal(req.VideoURLs)
+			if err != nil {
+				return nil, fmt.Errorf("failed to serialize video URLs: %w", err)
+			}
+			post.VideoURLs = string(videoURLsBytes)
+		} else {
+			post.VideoURLs = "[]"
 		}
 	}
 	if req.IsPinned != nil {
 		post.IsPinned = *req.IsPinned
+	}
+
+	// Ensure JSONB fields are always valid JSON before saving.
+	// FindByID may return a cached post where these fields are empty strings
+	// (due to MarshalJSON/Unmarshal type mismatch in cache layer).
+	if post.ImageURLs == "" {
+		post.ImageURLs = "[]"
+	}
+	if post.VideoURLs == "" {
+		post.VideoURLs = "[]"
 	}
 
 	if err := s.postRepo.Update(post); err != nil {

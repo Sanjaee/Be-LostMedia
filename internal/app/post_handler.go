@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -494,51 +495,64 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 		return
 	}
 
-	// Process images in background (async)
+	// Read all files into memory BEFORE starting goroutine.
+	// After the handler returns, Go may clean up multipart temp files,
+	// so fileHeader.Open() could fail inside a goroutine.
+	var fileDataList []util.FileData
+	for _, fileHeader := range files {
+		file, err := fileHeader.Open()
+		if err != nil {
+			log.Printf("[IMAGE UPLOAD] Error opening file %s: %v", fileHeader.Filename, err)
+			continue
+		}
+		fileData, err := util.ReadFileFromReader(file, fileHeader.Filename)
+		file.Close()
+		if err != nil {
+			log.Printf("[IMAGE UPLOAD] Error reading file %s: %v", fileHeader.Filename, err)
+			continue
+		}
+		fileDataList = append(fileDataList, *fileData)
+	}
+
+	if len(fileDataList) == 0 {
+		// No readable files — still return the post (text-only)
+		if h.wsHub != nil {
+			h.wsHub.BroadcastToAll(map[string]interface{}{
+				"type":    "new_post",
+				"post_id": post.ID,
+			})
+		}
+		util.SuccessResponse(c, http.StatusCreated, "Post created (no processable images)", gin.H{"post": post})
+		return
+	}
+
+	// Process images in background (async) — data is already in memory
 	go func() {
-		var fileDataList []util.FileData
+		log.Printf("[IMAGE UPLOAD] Starting async image processing for post %s, %d file(s)", post.ID, len(fileDataList))
 
-		// Read all files into memory
-		for _, fileHeader := range files {
-			file, err := fileHeader.Open()
-			if err != nil {
-				continue
-			}
-
-			fileData, err := util.ReadFileFromReader(file, fileHeader.Filename)
-			file.Close()
-			if err != nil {
-				continue
-			}
-
-			fileDataList = append(fileDataList, *fileData)
-		}
-
-		if len(fileDataList) == 0 {
-			return
-		}
-
-		// Process and upload images
 		imageURLs, err := h.cloudinaryClient.ProcessMultipleFiles(fileDataList)
 		if err != nil {
+			log.Printf("[IMAGE UPLOAD] Cloudinary upload failed for post %s: %v", post.ID, err)
 			return
 		}
 
-		// Update post with image URLs
+		log.Printf("[IMAGE UPLOAD] Cloudinary upload success for post %s: %v", post.ID, imageURLs)
+
 		updateReq := service.UpdatePostRequest{
 			ImageURLs: imageURLs,
 		}
 
 		updatedPost, err := h.postService.UpdatePost(userID.(string), post.ID, updateReq)
 		if err != nil {
+			log.Printf("[IMAGE UPLOAD] Failed to update post %s: %v", post.ID, err)
 			return
 		}
 
-		// Send notification to user that upload is completed (saves to DB and sends via WebSocket)
+		log.Printf("[IMAGE UPLOAD] Post %s updated successfully with %d image(s)", updatedPost.ID, len(imageURLs))
+
 		if h.notificationService != nil {
 			_ = h.notificationService.SendPostUploadCompletedNotification(userID.(string), updatedPost.ID, len(imageURLs))
 		}
-		// Broadcast new post to all clients so feed updates in real time
 		if h.wsHub != nil {
 			h.wsHub.BroadcastToAll(map[string]interface{}{
 				"type":    "new_post",
@@ -562,6 +576,194 @@ func (h *PostHandler) CreatePostWithImages(c *gin.Context) {
 
 	// Return response immediately (ASYNC)
 	util.SuccessResponse(c, http.StatusAccepted, "Post created and images are being processed", gin.H{
+		"post":   post,
+		"status": "processing",
+	})
+}
+
+// CreatePostWithVideos handles post creation with video uploads (async)
+// POST /api/v1/posts/upload-video
+func (h *PostHandler) CreatePostWithVideos(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		util.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	// Parse multipart form – max 25MB to allow overhead on top of 20MB video limit
+	if err := c.Request.ParseMultipartForm(25 << 20); err != nil {
+		util.BadRequest(c, "Failed to parse form data")
+		return
+	}
+
+	// Get content
+	content := c.PostForm("content")
+	var contentPtr *string
+	if content != "" {
+		contentPtr = &content
+	}
+
+	// Get group_id if provided
+	groupID := c.PostForm("group_id")
+	var groupIDPtr *string
+	if groupID != "" {
+		groupIDPtr = &groupID
+	}
+
+	// Get files
+	form, err := c.MultipartForm()
+	if err != nil {
+		util.BadRequest(c, "Failed to parse multipart form")
+		return
+	}
+
+	files := form.File["videos"]
+	if len(files) == 0 {
+		files = form.File["files"]
+	}
+
+	// Validate: must have either content or videos
+	if (contentPtr == nil || *contentPtr == "") && len(files) == 0 {
+		util.BadRequest(c, "Post must have either content or videos")
+		return
+	}
+
+	// Validate maximum 3 videos
+	if len(files) > 3 {
+		util.BadRequest(c, "Maximum 3 videos allowed")
+		return
+	}
+
+	// Validate file sizes (max 20MB each) and file type
+	maxSize := int64(20 * 1024 * 1024) // 20MB
+	allowedExts := map[string]bool{
+		".mp4": true, ".mov": true, ".avi": true,
+		".webm": true, ".mkv": true, ".3gp": true,
+	}
+	for _, fileHeader := range files {
+		if fileHeader.Size > maxSize {
+			util.BadRequest(c, fmt.Sprintf("File %s exceeds 20MB limit", fileHeader.Filename))
+			return
+		}
+		if !allowedExts[util.GetFileExt(fileHeader.Filename)] {
+			util.BadRequest(c, fmt.Sprintf("File %s is not a supported video format (mp4, mov, avi, webm, mkv, 3gp)", fileHeader.Filename))
+			return
+		}
+	}
+
+	// Create post immediately with empty video URLs (will be updated async)
+	createReq := service.CreatePostRequest{
+		Content:   contentPtr,
+		ImageURLs: []string{},
+		VideoURLs: []string{},
+		GroupID:   groupIDPtr,
+	}
+
+	post, err := h.postService.CreatePost(userID.(string), createReq)
+	if err != nil {
+		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	// If no videos, broadcast and return immediately
+	if len(files) == 0 {
+		if h.wsHub != nil {
+			h.wsHub.BroadcastToAll(map[string]interface{}{
+				"type":    "new_post",
+				"post_id": post.ID,
+			})
+		}
+		util.SuccessResponse(c, http.StatusCreated, "Post created successfully", gin.H{"post": post})
+		return
+	}
+
+	// Read all video files into memory BEFORE starting goroutine.
+	// After the handler returns, Go may clean up multipart temp files,
+	// so fileHeader.Open() could fail inside a goroutine.
+	var fileDataList []util.FileData
+	for _, fileHeader := range files {
+		file, err := fileHeader.Open()
+		if err != nil {
+			log.Printf("[VIDEO UPLOAD] Error opening file %s: %v", fileHeader.Filename, err)
+			continue
+		}
+		fileData, err := util.ReadFileFromReader(file, fileHeader.Filename)
+		file.Close()
+		if err != nil {
+			log.Printf("[VIDEO UPLOAD] Error reading file %s: %v", fileHeader.Filename, err)
+			continue
+		}
+		fileDataList = append(fileDataList, *fileData)
+	}
+
+	if len(fileDataList) == 0 {
+		log.Printf("[VIDEO UPLOAD] No valid files to process for post %s", post.ID)
+		if h.wsHub != nil {
+			h.wsHub.BroadcastToAll(map[string]interface{}{
+				"type":    "new_post",
+				"post_id": post.ID,
+			})
+		}
+		util.SuccessResponse(c, http.StatusCreated, "Post created (no processable videos)", gin.H{"post": post})
+		return
+	}
+
+	// Process videos in background (async) — data is already in memory
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[VIDEO UPLOAD] PANIC in goroutine for post %s: %v", post.ID, r)
+			}
+		}()
+
+		log.Printf("[VIDEO UPLOAD] Starting async video processing for post %s, %d file(s)", post.ID, len(fileDataList))
+
+		videoURLs, err := h.cloudinaryClient.ProcessMultipleVideos(fileDataList)
+		if err != nil {
+			log.Printf("[VIDEO UPLOAD] Cloudinary upload failed for post %s: %v", post.ID, err)
+			return
+		}
+
+		log.Printf("[VIDEO UPLOAD] Cloudinary upload success for post %s: %v", post.ID, videoURLs)
+
+		updateReq := service.UpdatePostRequest{
+			VideoURLs: videoURLs,
+		}
+
+		updatedPost, err := h.postService.UpdatePost(userID.(string), post.ID, updateReq)
+		if err != nil {
+			log.Printf("[VIDEO UPLOAD] Failed to update post %s with video URLs: %v", post.ID, err)
+			return
+		}
+
+		log.Printf("[VIDEO UPLOAD] Post %s updated successfully with %d video(s)", updatedPost.ID, len(videoURLs))
+
+		if h.notificationService != nil {
+			_ = h.notificationService.SendPostUploadCompletedNotification(userID.(string), updatedPost.ID, len(videoURLs), "video")
+		}
+		if h.wsHub != nil {
+			h.wsHub.BroadcastToAll(map[string]interface{}{
+				"type":    "new_post",
+				"post_id": updatedPost.ID,
+			})
+		}
+	}()
+
+	// Send initial WebSocket notification that upload is pending
+	if h.wsHub != nil {
+		h.wsHub.BroadcastToUser(userID.(string), map[string]interface{}{
+			"type":    "post_upload_pending",
+			"post_id": post.ID,
+			"message": "Post sedang diproses, video sedang diupload...",
+			"status":  "pending",
+			"data": map[string]interface{}{
+				"post_id": post.ID,
+			},
+		})
+	}
+
+	// Return response immediately (ASYNC)
+	util.SuccessResponse(c, http.StatusAccepted, "Post created and videos are being processed", gin.H{
 		"post":   post,
 		"status": "processing",
 	})

@@ -458,19 +458,24 @@ func (r *postRepository) Update(post *model.Post) error {
 		return err
 	}
 
-	// Update caches instead of invalidating (keeps cache warm)
+	// Update caches
 	if r.redis != nil {
-		// Update post cache
+		// Update individual post cache
 		r.cachePost(post)
 
-		// Update engagement score if needed (content change doesn't affect engagement, but we keep it fresh)
-		// Only update if post is in sorted set (non-group posts)
+		// Update engagement score if needed
 		if post.GroupID == nil {
 			r.UpdatePostEngagementScore(post.ID)
 		}
 
-		// Note: We don't invalidate feed/user caches to keep them warm
-		// The feed will be updated naturally through engagement score updates
+		// Invalidate feed & user list caches so updated media URLs are visible immediately
+		// This is important for async uploads (images/videos) where post is created first
+		// then updated with media URLs after processing.
+		r.invalidateUserCache(post.UserID)
+		r.invalidateFeedCache(post.UserID)
+		if post.GroupID != nil {
+			r.invalidateGroupCache(*post.GroupID)
+		}
 	}
 
 	return nil

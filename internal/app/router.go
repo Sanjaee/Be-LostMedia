@@ -311,7 +311,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			posts.Use(authHandler.AuthMiddleware())
 			{
 				posts.POST("", postHandler.CreatePost)
-				posts.POST("/upload", postHandler.CreatePostWithImages) // Async image upload
+				posts.POST("/upload", postHandler.CreatePostWithImages)       // Async image upload
+			posts.POST("/upload-video", postHandler.CreatePostWithVideos) // Async video upload
 				posts.GET("/feed", postHandler.GetFeed)
 				posts.PUT("/:id", postHandler.UpdatePost)
 				posts.DELETE("/:id", postHandler.DeletePost)

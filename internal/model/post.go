@@ -14,6 +14,7 @@ type Post struct {
 	GroupID      *string        `gorm:"type:uuid;index;references:groups(id)" json:"group_id,omitempty"`
 	Content      *string        `gorm:"type:text" json:"content,omitempty"`
 	ImageURLs    string         `gorm:"type:jsonb" json:"image_urls,omitempty"` // Array of image URLs stored as JSON
+	VideoURLs    string         `gorm:"type:jsonb;default:'[]'" json:"video_urls,omitempty"` // Array of video URLs stored as JSON
 	SharedPostID *string        `gorm:"type:uuid;index;references:posts(id)" json:"shared_post_id,omitempty"`
 	IsPinned     bool           `gorm:"default:false" json:"is_pinned"`
 	CreatedAt    time.Time      `gorm:"autoCreateTime" json:"created_at"`
@@ -33,10 +34,27 @@ type Post struct {
 	Location   *PostLocation `gorm:"foreignKey:PostID;references:ID" json:"location,omitempty"`
 }
 
-// BeforeCreate hook to generate UUID
+// BeforeCreate hook to generate UUID and ensure JSONB defaults
 func (p *Post) BeforeCreate(tx *gorm.DB) error {
 	if p.ID == "" {
 		p.ID = uuid.New().String()
+	}
+	if p.ImageURLs == "" {
+		p.ImageURLs = "[]"
+	}
+	if p.VideoURLs == "" {
+		p.VideoURLs = "[]"
+	}
+	return nil
+}
+
+// BeforeSave hook to ensure JSONB fields are always valid JSON
+func (p *Post) BeforeSave(tx *gorm.DB) error {
+	if p.ImageURLs == "" {
+		p.ImageURLs = "[]"
+	}
+	if p.VideoURLs == "" {
+		p.VideoURLs = "[]"
 	}
 	return nil
 }
@@ -73,14 +91,42 @@ func (p *Post) SetImageURLs(urls []string) error {
 	return nil
 }
 
-// MarshalJSON custom JSON marshaling to convert ImageURLs string to array
+// GetVideoURLs returns VideoURLs as a slice of strings
+func (p *Post) GetVideoURLs() []string {
+	if p.VideoURLs == "" || p.VideoURLs == "[]" {
+		return []string{}
+	}
+	var urls []string
+	if err := json.Unmarshal([]byte(p.VideoURLs), &urls); err != nil {
+		return []string{}
+	}
+	return urls
+}
+
+// SetVideoURLs sets VideoURLs from a slice of strings
+func (p *Post) SetVideoURLs(urls []string) error {
+	if len(urls) == 0 {
+		p.VideoURLs = "[]"
+		return nil
+	}
+	bytes, err := json.Marshal(urls)
+	if err != nil {
+		return err
+	}
+	p.VideoURLs = string(bytes)
+	return nil
+}
+
+// MarshalJSON custom JSON marshaling to convert ImageURLs/VideoURLs string to array
 func (p *Post) MarshalJSON() ([]byte, error) {
 	type Alias Post
 	aux := &struct {
 		ImageURLs []string `json:"image_urls,omitempty"`
+		VideoURLs []string `json:"video_urls,omitempty"`
 		*Alias
 	}{
 		ImageURLs: p.GetImageURLs(),
+		VideoURLs: p.GetVideoURLs(),
 		Alias:     (*Alias)(p),
 	}
 	return json.Marshal(aux)

@@ -195,6 +195,77 @@ func (c *CloudinaryClient) ProcessMultipleFiles(files []FileData) ([]string, err
 	return imageURLs, nil
 }
 
+// UploadVideo uploads a video file to Cloudinary with compression transformations
+// Cloudinary handles the compression server-side via eager transformations.
+func (c *CloudinaryClient) UploadVideo(filePath string) (string, error) {
+	ctx := context.Background()
+
+	result, err := c.cld.Upload.Upload(ctx, filePath, uploader.UploadParams{
+		Folder:       c.cfg.CloudinaryFolder + "/videos",
+		ResourceType: "video",
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("error uploading video to cloudinary: %w", err)
+	}
+
+	// Inject transformation into URL for optimized delivery:
+	// compress, convert to mp4/h264, limit resolution to 720p, auto quality
+	url := result.SecureURL
+	url = strings.Replace(url, "/upload/", "/upload/c_limit,w_1280,h_720,q_auto,f_mp4,vc_h264/", 1)
+	return url, nil
+}
+
+// ProcessVideoFromMemory processes a video file from memory (saves to tmp, uploads to Cloudinary)
+func (c *CloudinaryClient) ProcessVideoFromMemory(fileData []byte, filename string) (string, error) {
+	// Ensure tmp directory exists
+	tmpDir, err := ensureTmpDir()
+	if err != nil {
+		return "", err
+	}
+
+	// Create temporary file in tmp directory
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		ext = ".mp4"
+	}
+	tempFile := filepath.Join(tmpDir, uuid.New().String()+ext)
+
+	err = os.WriteFile(tempFile, fileData, 0644)
+	if err != nil {
+		return "", fmt.Errorf("error writing temp video file: %w", err)
+	}
+	defer os.Remove(tempFile) // Clean up temp file
+
+	// Upload to Cloudinary (compression handled by Cloudinary transformations)
+	videoURL, err := c.UploadVideo(tempFile)
+	if err != nil {
+		return "", err
+	}
+
+	return videoURL, nil
+}
+
+// ProcessMultipleVideos processes multiple video files from memory
+func (c *CloudinaryClient) ProcessMultipleVideos(files []FileData) ([]string, error) {
+	var videoURLs []string
+
+	for _, fileData := range files {
+		videoURL, err := c.ProcessVideoFromMemory(fileData.Data, fileData.Filename)
+		if err != nil {
+			fmt.Printf("Error processing video file %s: %v\n", fileData.Filename, err)
+			continue
+		}
+		videoURLs = append(videoURLs, videoURL)
+	}
+
+	if len(videoURLs) == 0 {
+		return nil, fmt.Errorf("no videos were successfully processed")
+	}
+
+	return videoURLs, nil
+}
+
 // FileData represents file data in memory
 type FileData struct {
 	Data     []byte
@@ -219,6 +290,18 @@ func ReadFileFromReader(reader io.Reader, filename string) (*FileData, error) {
 		mimeType = "image/webp"
 	case ".gif":
 		mimeType = "image/gif"
+	case ".mp4":
+		mimeType = "video/mp4"
+	case ".mov":
+		mimeType = "video/quicktime"
+	case ".avi":
+		mimeType = "video/x-msvideo"
+	case ".webm":
+		mimeType = "video/webm"
+	case ".mkv":
+		mimeType = "video/x-matroska"
+	case ".3gp":
+		mimeType = "video/3gpp"
 	}
 
 	return &FileData{
@@ -226,4 +309,19 @@ func ReadFileFromReader(reader io.Reader, filename string) (*FileData, error) {
 		Filename: filename,
 		MimeType: mimeType,
 	}, nil
+}
+
+// IsVideoFile checks if a filename represents a video file based on extension
+func IsVideoFile(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".mp4", ".mov", ".avi", ".webm", ".mkv", ".3gp":
+		return true
+	}
+	return false
+}
+
+// GetFileExt returns the lowercase file extension including the dot (e.g. ".mp4")
+func GetFileExt(filename string) string {
+	return strings.ToLower(filepath.Ext(filename))
 }

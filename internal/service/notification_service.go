@@ -18,7 +18,7 @@ type NotificationService interface {
 	SendFriendRemovedNotification(receiverID, senderID, senderName string) error
 	SendCommentReplyNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
 	SendPostCommentNotification(receiverID, senderID, senderName, commentID, postID string, commentContent string) error
-	SendPostUploadCompletedNotification(userID, postID string, imageCount int) error
+	SendPostUploadCompletedNotification(userID, postID string, mediaCount int, mediaType ...string) error
 	SendPostLikedNotification(receiverID, senderID, senderName, postID string) error
 	SendRoleUpdatedNotification(receiverID, senderID, senderName, newRole string) error
 	CheckPostLikedNotificationExists(senderID, postID string) (bool, error)
@@ -307,12 +307,18 @@ func (s *notificationService) SendPostCommentNotification(
 }
 
 // SendPostUploadCompletedNotification sends a post upload completed notification
-func (s *notificationService) SendPostUploadCompletedNotification(userID, postID string, imageCount int) error {
+// mediaType is optional; defaults to "gambar" (image). Pass "video" for video uploads.
+func (s *notificationService) SendPostUploadCompletedNotification(userID, postID string, mediaCount int, mediaType ...string) error {
+	mt := "gambar"
+	if len(mediaType) > 0 && mediaType[0] != "" {
+		mt = mediaType[0]
+	}
 	title := "Upload Selesai"
-	message := fmt.Sprintf("Post berhasil diupload dengan %d gambar", imageCount)
+	message := fmt.Sprintf("Post berhasil diupload dengan %d %s", mediaCount, mt)
 	data := map[string]interface{}{
 		"post_id":     postID,
-		"image_count": imageCount,
+		"media_count": mediaCount,
+		"media_type":  mt,
 	}
 
 	return s.sendNotification(
