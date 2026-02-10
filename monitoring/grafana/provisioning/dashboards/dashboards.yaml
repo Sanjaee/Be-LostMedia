@@ -1,0 +1,13 @@
+# Provisioning dashboard: tampil di menu Dashboards
+apiVersion: 1
+
+providers:
+  - name: 'Monitoring'
+    orgId: 1
+    folder: 'Monitoring'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

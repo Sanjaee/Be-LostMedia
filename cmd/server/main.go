@@ -7,20 +7,23 @@ import (
 	"path/filepath"
 	"yourapp/internal/app"
 	"yourapp/internal/config"
+
+	"github.com/gin-gonic/gin"
 )
 
-func init() {
-	// Semua log hanya ke file → Promtail → Loki → Grafana (tidak ke docker logs)
+func main() {
+	// Semua log (termasuk [GIN]) hanya ke file → Promtail → Loki → Grafana (tidak ke docker logs)
 	logDir := "/var/log/app"
 	if err := os.MkdirAll(logDir, 0755); err == nil {
 		f, err := os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err == nil {
+			defer f.Close()
 			log.SetOutput(f)
+			gin.DefaultWriter = f
+			gin.DefaultErrorWriter = f
 		}
 	}
-}
 
-func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {

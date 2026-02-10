@@ -93,6 +93,57 @@ services:
     restart: unless-stopped
     # Di Linux, tambah volume ini agar Promtail baca log container dari disk: - /var/lib/docker/containers:/var/lib/docker/containers:ro
 
+  # --- Metrics: CPU, RAM, container (Prometheus + Node Exporter + cAdvisor) ---
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: yourapp_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+
+  node_exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: yourapp_node_exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    networks:
+      - yourapp_network
+    # Di Windows Docker Desktop, mount /proc dan /sys bisa gagal; kalau error, comment volume di atas dan jalankan tanpa host path
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: yourapp_cadvisor
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "8082:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - yourapp_network
+    # Di Windows, beberapa volume bisa gagal; kalau cadvisor error, comment volume yang bermasalah
+
   grafana:
     image: grafana/grafana:10.4.2
     container_name: yourapp_grafana
@@ -102,13 +153,15 @@ services:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_SERVER_ROOT_URL=https://lostmedia.zacloth.com/grafana
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
       - GF_INSTALL_PLUGINS=grafana-clock-panel
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - loki
+      - prometheus
     networks:
       - yourapp_network
     restart: unless-stopped
@@ -174,6 +227,7 @@ volumes:
   loki_data:
   grafana_data:
   app_logs:
+  prometheus_data:
 
 networks:
   yourapp_network:

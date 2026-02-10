@@ -1,0 +1,21 @@
+# Prometheus - scrape metrik CPU, RAM, container, dll.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus sendiri
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Node Exporter: CPU, RAM, disk host
+  - job_name: node
+    static_configs:
+      - targets: ["node_exporter:9100"]
+
+  # cAdvisor: CPU, RAM per container Docker
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
