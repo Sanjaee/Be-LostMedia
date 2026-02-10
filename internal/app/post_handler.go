@@ -590,8 +590,8 @@ func (h *PostHandler) CreatePostWithVideos(c *gin.Context) {
 		return
 	}
 
-	// Parse multipart form – max 25MB to allow overhead on top of 20MB video limit
-	if err := c.Request.ParseMultipartForm(25 << 20); err != nil {
+	// Parse multipart form – max 105MB for up to 5 videos (5×20MB) + overhead
+	if err := c.Request.ParseMultipartForm(105 << 20); err != nil {
 		util.BadRequest(c, "Failed to parse form data")
 		return
 	}
@@ -628,9 +628,9 @@ func (h *PostHandler) CreatePostWithVideos(c *gin.Context) {
 		return
 	}
 
-	// Validate maximum 3 videos
-	if len(files) > 3 {
-		util.BadRequest(c, "Maximum 3 videos allowed")
+	// Validate maximum 5 videos
+	if len(files) > 5 {
+		util.BadRequest(c, "Maximum 5 videos allowed")
 		return
 	}
 
@@ -651,9 +651,16 @@ func (h *PostHandler) CreatePostWithVideos(c *gin.Context) {
 		}
 	}
 
-	// Create post immediately with empty video URLs (will be updated async)
+	// Create post immediately with empty video URLs (will be updated async).
+	// Service requires at least one of: content, image URLs, or video URLs.
+	// When user sends only videos, we don't have URLs yet — use placeholder content so CreatePost accepts.
+	createContent := contentPtr
+	if (createContent == nil || *createContent == "") && len(files) > 0 {
+		placeholder := " "
+		createContent = &placeholder
+	}
 	createReq := service.CreatePostRequest{
-		Content:   contentPtr,
+		Content:   createContent,
 		ImageURLs: []string{},
 		VideoURLs: []string{},
 		GroupID:   groupIDPtr,
