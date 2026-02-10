@@ -1,0 +1,26 @@
+# Promtail - collect logs dan kirim ke Loki
+# Log app Go utama via Loki Docker driver (lihat docker-compose). Promtail dipakai untuk:
+# - Log dari file di /var/log/app (jika app nulis ke file)
+# - Di Linux: uncomment job "docker" dan mount /var/lib/docker/containers di compose
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    tenant_id: yourapp
+
+scrape_configs:
+  # Log dari file (jika backend Go nulis ke volume shared /var/log/app)
+  - job_name: app-files
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: yourapp
+          app: go-backend
+          __path__: /var/log/app/*.log

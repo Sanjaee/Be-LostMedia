@@ -58,6 +58,57 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    volumes:
+      - app_logs:/var/log/app
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+
+  # --- Monitoring: Grafana + Loki + Promtail ---
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: yourapp_loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki-config.yml:/etc/loki/local-config.yml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yml
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: yourapp_promtail
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./monitoring/promtail-config.yml:/etc/promtail/config.yml
+      - app_logs:/var/log/app:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - yourapp_network
+    restart: unless-stopped
+    # Di Linux, tambah volume ini agar Promtail baca log container dari disk: - /var/lib/docker/containers:/var/lib/docker/containers:ro
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: yourapp_grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - loki
     networks:
       - yourapp_network
     restart: unless-stopped
@@ -116,24 +167,13 @@ services:
       timeout: 5s
       retries: 5
 
-  pgweb:
-    image: sosedoff/pgweb:latest
-    container_name: yourapp_pgweb
-    ports:
-      - "8081:8081"
-    environment:
-      - DATABASE_URL=postgres://${POSTGRES_USER:-yourapp_db}:${POSTGRES_PASSWORD:-password123}@db:5432/${POSTGRES_DB:-yourapp}?sslmode=disable
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - yourapp_network
-    restart: unless-stopped
-
 volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
+  loki_data:
+  grafana_data:
+  app_logs:
 
 networks:
   yourapp_network:

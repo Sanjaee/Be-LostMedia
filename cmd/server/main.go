@@ -2,10 +2,24 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"yourapp/internal/app"
 	"yourapp/internal/config"
 )
+
+func init() {
+	// Nulis log ke file agar Promtail kirim ke Loki (Grafana)
+	logDir := "/var/log/app"
+	if err := os.MkdirAll(logDir, 0755); err == nil {
+		f, err := os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err == nil {
+			log.SetOutput(io.MultiWriter(os.Stdout, f))
+		}
+	}
+}
 
 func main() {
 	// Load configuration
