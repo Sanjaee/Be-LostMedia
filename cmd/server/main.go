@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,12 +10,12 @@ import (
 )
 
 func init() {
-	// Nulis log ke file agar Promtail kirim ke Loki (Grafana)
+	// Semua log hanya ke file → Promtail → Loki → Grafana (tidak ke docker logs)
 	logDir := "/var/log/app"
 	if err := os.MkdirAll(logDir, 0755); err == nil {
 		f, err := os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err == nil {
-			log.SetOutput(io.MultiWriter(os.Stdout, f))
+			log.SetOutput(f)
 		}
 	}
 }
