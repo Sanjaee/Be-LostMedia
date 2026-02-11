@@ -107,27 +107,24 @@ func (h *UserHandler) GetUserStats(c *gin.Context) {
 		return
 	}
 
-	// Get users by type
-	var ownerCount, memberCount int64
-	allUsers, _, err := h.userRepo.FindAll(1000, 0) // Get all to count by type
-	if err == nil {
-		for _, user := range allUsers {
-			if user.UserType == "owner" {
-				ownerCount++
-			} else {
-				memberCount++
-			}
-		}
+	// Count by type (SQL-based, case-insensitive - syncs with all users)
+	ownerCount, err := h.userRepo.CountByUserType("owner")
+	if err != nil {
+		ownerCount = 0
+	}
+	memberCount := total - ownerCount
+	if memberCount < 0 {
+		memberCount = 0
 	}
 
-	// Get verified vs unverified count
-	var verifiedCount, unverifiedCount int64
-	for _, user := range allUsers {
-		if user.IsVerified {
-			verifiedCount++
-		} else {
-			unverifiedCount++
-		}
+	// Count verified vs unverified
+	verifiedCount, err := h.userRepo.CountVerified(true)
+	if err != nil {
+		verifiedCount = 0
+	}
+	unverifiedCount := total - verifiedCount
+	if unverifiedCount < 0 {
+		unverifiedCount = 0
 	}
 
 	util.SuccessResponse(c, http.StatusOK, "User stats retrieved successfully", gin.H{

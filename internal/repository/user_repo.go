@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"yourapp/internal/model"
@@ -18,6 +19,8 @@ type UserRepository interface {
 	SearchUsers(keyword string, limit, offset int) ([]model.User, error)
 	FindAll(limit, offset int) ([]model.User, int64, error) // Get all users with pagination
 	Count() (int64, error)                                  // Count all users
+	CountByUserType(userType string) (int64, error)         // Count users by type (case-insensitive)
+	CountVerified(verified bool) (int64, error)             // Count users by verification status
 	Update(user *model.User) error
 	UpdateOTP(email string, otpCode string, expiresAt time.Time) error
 	VerifyOTP(email string, otpCode string) (*model.User, error)
@@ -193,6 +196,21 @@ func (r *userRepository) FindAll(limit, offset int) ([]model.User, int64, error)
 func (r *userRepository) Count() (int64, error) {
 	var count int64
 	err := r.db.Model(&model.User{}).Count(&count).Error
+	return count, err
+}
+
+// CountByUserType counts users by user_type (case-insensitive)
+func (r *userRepository) CountByUserType(userType string) (int64, error) {
+	var count int64
+	lower := strings.ToLower(userType)
+	err := r.db.Model(&model.User{}).Where("LOWER(user_type) = ?", lower).Count(&count).Error
+	return count, err
+}
+
+// CountVerified counts users by verification status
+func (r *userRepository) CountVerified(verified bool) (int64, error) {
+	var count int64
+	err := r.db.Model(&model.User{}).Where("is_verified = ?", verified).Count(&count).Error
 	return count, err
 }
 
