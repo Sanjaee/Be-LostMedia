@@ -97,6 +97,8 @@ Lalu buka lagi **Dashboards** → **Monitoring**.
 
 **Filesystem usage angka aneh (overflow):** Sudah diperbaiki di dashboard (pakai `clamp_max`). Refresh dashboard atau restart Grafana.
 
+**"Live tailing was stopped due to following error: undefined":** Biasanya karena Nginx di depan Grafana tidak support WebSocket. Di `nginx.conf` blok `location /grafana/` harus ada `proxy_set_header Upgrade $http_upgrade` dan `proxy_set_header Connection $connection_upgrade` (plus `map $http_upgrade $connection_upgrade` di atas). Pakai time range kecil (Last 5 minutes) saat Live.
+
 ---
 
 ## 4. Menu yang muncul dan kegunaannya
