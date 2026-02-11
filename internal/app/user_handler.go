@@ -34,6 +34,26 @@ func NewUserHandler(userRepo repository.UserRepository, jwtSecret string, wsHub 
 // GET /api/v1/users/online
 func (h *UserHandler) GetOnlineUsers(c *gin.Context) {
 	onlineIDs := h.wsHub.GetOnlineUserIDs()
+	limitStr := c.Query("limit")
+	offsetStr := c.Query("offset")
+	usePaging := limitStr != "" || offsetStr != ""
+	limit := 0
+	offset := 0
+	if usePaging {
+		if limitStr != "" {
+			if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		if limit == 0 {
+			limit = 20
+		}
+		if offsetStr != "" {
+			if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+				offset = parsed
+			}
+		}
+	}
 
 	type OnlineUser struct {
 		ID           string  `json:"id"`
@@ -58,9 +78,34 @@ func (h *UserHandler) GetOnlineUsers(c *gin.Context) {
 		})
 	}
 
+	total := len(users)
+	if usePaging {
+		if offset > total {
+			users = []OnlineUser{}
+		} else {
+			end := offset + limit
+			if end > total {
+				end = total
+			}
+			users = users[offset:end]
+		}
+	}
+
 	util.SuccessResponse(c, http.StatusOK, "Online users retrieved", gin.H{
 		"users": users,
-		"count": len(users),
+		"count": total,
+		"limit": func() interface{} {
+			if usePaging {
+				return limit
+			}
+			return nil
+		}(),
+		"offset": func() interface{} {
+			if usePaging {
+				return offset
+			}
+			return nil
+		}(),
 	})
 }
 
