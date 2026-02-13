@@ -266,7 +266,7 @@ func (r *commentRepository) CountByPostID(postID string) (int64, error) {
 
 	var count int64
 	err := r.db.Model(&model.Comment{}).
-		Where("post_id = ? AND parent_id IS NULL", postID).
+		Where("post_id = ?", postID).
 		Count(&count).Error
 	if err != nil {
 		return 0, err
@@ -280,7 +280,7 @@ func (r *commentRepository) CountByPostID(postID string) (int64, error) {
 	return count, nil
 }
 
-// CountByPostIDs counts comments for multiple posts in one query (top-level only)
+// CountByPostIDs counts comments for multiple posts in one query (includes replies)
 func (r *commentRepository) CountByPostIDs(postIDs []string) (map[string]int64, error) {
 	if len(postIDs) == 0 {
 		return map[string]int64{}, nil
@@ -291,7 +291,7 @@ func (r *commentRepository) CountByPostIDs(postIDs []string) (map[string]int64, 
 	}
 	err := r.db.Model(&model.Comment{}).
 		Select("post_id, count(*) as count").
-		Where("post_id IN ? AND parent_id IS NULL", postIDs).
+		Where("post_id IN ?", postIDs).
 		Group("post_id").
 		Find(&results).Error
 	if err != nil {
