@@ -132,12 +132,34 @@ func (h *AuthHandler) ResendOTP(c *gin.Context) {
 		return
 	}
 
-	if err := h.authService.ResendOTP(req.Email); err != nil {
-		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+	result, err := h.authService.ResendOTP(req.Email)
+	if err != nil {
+		payload := gin.H{}
+		if result != nil {
+			payload["next_resend_at"] = result.NextResendAt
+			payload["can_resend"] = result.CanResend
+		}
+		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), payload)
+		return
+	}
+	util.SuccessResponse(c, http.StatusOK, "OTP sent successfully", result)
+}
+
+// GetOTPResendStatus returns next_resend_at for countdown (persists on refresh)
+// GET /api/v1/auth/otp-resend-status?email=xxx
+func (h *AuthHandler) GetOTPResendStatus(c *gin.Context) {
+	email := c.Query("email")
+	if email == "" {
+		util.BadRequest(c, "email is required")
 		return
 	}
 
-	util.SuccessResponse(c, http.StatusOK, "OTP sent successfully", nil)
+	result, err := h.authService.GetOTPResendStatus(email)
+	if err != nil {
+		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	util.SuccessResponse(c, http.StatusOK, "OTP resend status", result)
 }
 
 // GoogleOAuth handles Google OAuth login
@@ -183,7 +205,8 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 // POST /api/v1/auth/forgot-password
 func (h *AuthHandler) RequestResetPassword(c *gin.Context) {
 	var req struct {
-		Email string `json:"email" binding:"required,email"`
+		Email    string `json:"email" binding:"required,email"`
+		IsResend bool   `json:"is_resend"` // true when called from "Kirim Ulang" on verify-otp-reset
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -191,13 +214,17 @@ func (h *AuthHandler) RequestResetPassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.authService.RequestResetPassword(req.Email); err != nil {
-		// Return error if email doesn't exist or other error occurs
-		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), nil)
+	result, err := h.authService.RequestResetPassword(req.Email, req.IsResend)
+	if err != nil {
+		payload := gin.H{}
+		if result != nil {
+			payload["next_resend_at"] = result.NextResendAt
+			payload["can_resend"] = result.CanResend
+		}
+		util.ErrorResponse(c, http.StatusBadRequest, err.Error(), payload)
 		return
 	}
-
-	util.SuccessResponse(c, http.StatusOK, "Kode OTP telah dikirim ke email Anda", nil)
+	util.SuccessResponse(c, http.StatusOK, "Kode OTP telah dikirim ke email Anda", result)
 }
 
 // VerifyResetPassword handles password reset with OTP verification

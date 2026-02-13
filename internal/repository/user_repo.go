@@ -23,6 +23,7 @@ type UserRepository interface {
 	CountVerified(verified bool) (int64, error)             // Count users by verification status
 	Update(user *model.User) error
 	UpdateOTP(email string, otpCode string, expiresAt time.Time) error
+	UpdateOTPWithResend(email string, otpCode string, expiresAt time.Time, resendCount int) error
 	VerifyOTP(email string, otpCode string) (*model.User, error)
 	UpdateResetToken(email string, token string, expiresAt time.Time) error
 	FindByResetToken(token string) (*model.User, error)
@@ -112,6 +113,18 @@ func (r *userRepository) UpdateOTP(email string, otpCode string, expiresAt time.
 		Updates(map[string]interface{}{
 			"otp_code":       otpCode,
 			"otp_expires_at": expiresAt,
+		}).Error
+}
+
+func (r *userRepository) UpdateOTPWithResend(email string, otpCode string, expiresAt time.Time, resendCount int) error {
+	now := time.Now()
+	return r.db.Model(&model.User{}).
+		Where("email = ?", email).
+		Updates(map[string]interface{}{
+			"otp_code":            otpCode,
+			"otp_expires_at":      expiresAt,
+			"otp_resend_count":    resendCount,
+			"otp_last_resend_at":  now,
 		}).Error
 }
 

@@ -198,6 +198,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/verify-otp", authHandler.VerifyOTP)
 			auth.POST("/resend-otp", authHandler.ResendOTP)
+			auth.GET("/otp-resend-status", authHandler.GetOTPResendStatus)
 			auth.POST("/google-oauth", authHandler.GoogleOAuth)
 			auth.POST("/refresh-token", authHandler.RefreshToken)
 			auth.POST("/forgot-password", authHandler.RequestResetPassword)

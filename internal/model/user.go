@@ -23,8 +23,10 @@ type User struct {
 	LastLogin      *time.Time     `gorm:"type:timestamp" json:"last_login,omitempty"`
 	LoginType      string         `gorm:"type:varchar(50);default:'credential'" json:"login_type"` // credential, google
 	GoogleID       *string        `gorm:"type:varchar(255);uniqueIndex" json:"-"`
-	OTPCode        *string        `gorm:"type:varchar(6)" json:"-"`
-	OTPExpiresAt   *time.Time     `gorm:"type:timestamp" json:"-"`
+	OTPCode           *string    `gorm:"type:varchar(6)" json:"-"`
+	OTPExpiresAt      *time.Time `gorm:"type:timestamp" json:"-"`
+	OTPResendCount    int        `gorm:"default:0" json:"-"`           // Jumlah resend (0=belum pernah)
+	OTPLastResendAt   *time.Time `gorm:"type:timestamp" json:"-"`      // Waktu resend terakhir
 	ResetToken     *string        `gorm:"type:text" json:"-"`
 	ResetExpiresAt *time.Time     `gorm:"type:timestamp" json:"-"`
 	IsBanned       bool           `gorm:"default:false" json:"is_banned"`

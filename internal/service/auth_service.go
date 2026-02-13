@@ -17,10 +17,11 @@ type AuthService interface {
 	Register(req RegisterRequest) (*RegisterResponse, error)
 	Login(req LoginRequest) (*AuthResponse, error)
 	VerifyOTP(email, otpCode string) (*AuthResponse, error)
-	ResendOTP(email string) error
+	ResendOTP(email string) (*ResendOTPResult, error)
+	GetOTPResendStatus(email string) (*ResendOTPResult, error)
 	GoogleOAuth(req GoogleOAuthRequest) (*AuthResponse, error)
 	RefreshToken(refreshToken string) (*AuthResponse, error)
-	RequestResetPassword(email string) error
+	RequestResetPassword(email string, isResend bool) (*ResendOTPResult, error)
 	VerifyResetPassword(email, otpCode, newPassword string) error
 	ResetPassword(token, newPassword string) (*AuthResponse, error)
 	VerifyEmail(token string) (*AuthResponse, error)
@@ -72,6 +73,12 @@ type AuthResponse struct {
 	AccessToken  string      `json:"access_token"`
 	RefreshToken string      `json:"refresh_token"`
 	ExpiresIn    int         `json:"expires_in"`
+}
+
+// ResendOTPResult holds next_resend_at (Unix) for FE countdown
+type ResendOTPResult struct {
+	NextResendAt int64 `json:"next_resend_at"` // Unix timestamp when user can resend again
+	CanResend    bool  `json:"can_resend"`
 }
 
 func NewAuthService(userRepo repository.UserRepository, jwtSecret string, rabbitMQ *util.RabbitMQClient) AuthService {
@@ -314,24 +321,76 @@ func (s *authService) VerifyOTP(email, otpCode string) (*AuthResponse, error) {
 	}, nil
 }
 
-func (s *authService) ResendOTP(email string) error {
-	_, err := s.userRepo.FindByEmail(email)
-	if err != nil {
-		return errors.New("user not found")
+// getOTPResendCooldown returns duration after n-th resend: 1st=30s, 2nd=5m, 3rd=3h, 4th+=3d
+func getOTPResendCooldown(nthResend int) time.Duration {
+	switch nthResend {
+	case 1:
+		return 30 * time.Second
+	case 2:
+		return 5 * time.Minute
+	case 3:
+		return 3 * time.Hour
+	default:
+		return 3 * 24 * time.Hour // 3 days (4th and beyond)
+	}
+}
+
+func (s *authService) GetOTPResendStatus(email string) (*ResendOTPResult, error) {
+	user, err := s.userRepo.FindByEmail(email)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+	return s.computeResendStatus(user.OTPResendCount, user.OTPLastResendAt)
+}
+
+func (s *authService) computeResendStatus(resendCount int, lastResendAt *time.Time) (*ResendOTPResult, error) {
+	if lastResendAt == nil {
+		return &ResendOTPResult{CanResend: true, NextResendAt: 0}, nil
+	}
+	cooldown := getOTPResendCooldown(resendCount) // resendCount = nth resend done
+	nextResendAt := lastResendAt.Add(cooldown)
+	now := time.Now()
+	if now.After(nextResendAt) || now.Equal(nextResendAt) {
+		return &ResendOTPResult{CanResend: true, NextResendAt: 0}, nil
+	}
+	return &ResendOTPResult{
+		CanResend:    false,
+		NextResendAt: nextResendAt.Unix(),
+	}, nil
+}
+
+func (s *authService) ResendOTP(email string) (*ResendOTPResult, error) {
+	user, err := s.userRepo.FindByEmail(email)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	// Check cooldown
+	resendCount := user.OTPResendCount
+	lastResendAt := user.OTPLastResendAt
+	if lastResendAt != nil {
+		cooldown := getOTPResendCooldown(resendCount) // cooldown after last resend
+		nextResendAt := lastResendAt.Add(cooldown)
+		if time.Now().Before(nextResendAt) {
+			return &ResendOTPResult{
+				CanResend:    false,
+				NextResendAt: nextResendAt.Unix(),
+			}, errors.New("silakan tunggu sebelum mengirim ulang")
+		}
 	}
 
 	// Generate new OTP
 	otpCode := generateOTP()
 	otpExpiresAt := time.Now().Add(10 * time.Minute)
+	newResendCount := resendCount + 1
 
-	if err := s.userRepo.UpdateOTP(email, otpCode, otpExpiresAt); err != nil {
-		return fmt.Errorf("failed to update OTP: %w", err)
+	if err := s.userRepo.UpdateOTPWithResend(email, otpCode, otpExpiresAt, newResendCount); err != nil {
+		return nil, fmt.Errorf("failed to update OTP: %w", err)
 	}
 
-	// Send OTP email via RabbitMQ asynchronously (non-blocking)
-	// Same logic as reset password - send to queue immediately without waiting
+	// Send OTP email via RabbitMQ asynchronously
 	go func() {
-		s.ensureRabbitMQ() // Try to reconnect if needed
+		s.ensureRabbitMQ()
 		if s.rabbitMQ != nil {
 			emailMsg := util.EmailMessage{
 				To:      email,
@@ -349,8 +408,12 @@ func (s *authService) ResendOTP(email string) error {
 		}
 	}()
 
-	// Return immediately without waiting for email to be sent
-	return nil
+	nextCooldown := getOTPResendCooldown(newResendCount) // cooldown after this resend
+	nextResendAt := time.Now().Add(nextCooldown)
+	return &ResendOTPResult{
+		CanResend:    false,
+		NextResendAt: nextResendAt.Unix(),
+	}, nil
 }
 
 func (s *authService) GoogleOAuth(req GoogleOAuthRequest) (*AuthResponse, error) {
@@ -449,32 +512,54 @@ func (s *authService) RefreshToken(refreshToken string) (*AuthResponse, error) {
 	}, nil
 }
 
-func (s *authService) RequestResetPassword(email string) error {
+func (s *authService) RequestResetPassword(email string, isResend bool) (*ResendOTPResult, error) {
 	// Check if email exists in database first - must exist before sending email
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil || user == nil {
 		// Email doesn't exist in database - return error
-		return errors.New("email tidak terdaftar di sistem")
+		return nil, errors.New("email tidak terdaftar di sistem")
 	}
-
-	// Check if user registered with credential (not Google) - must be credential to reset password
 	if user.LoginType != "credential" {
-		return errors.New("reset password hanya tersedia untuk akun yang terdaftar dengan email dan password")
+		return nil, errors.New("reset password hanya tersedia untuk akun yang terdaftar dengan email dan password")
 	}
 
-	// User exists and has credential login type - proceed with OTP generation
-	// Generate OTP for reset password
 	otpCode := generateOTP()
 	otpExpiresAt := time.Now().Add(10 * time.Minute)
 
-	if err := s.userRepo.UpdateOTP(email, otpCode, otpExpiresAt); err != nil {
-		return fmt.Errorf("failed to update OTP: %w", err)
+	if isResend {
+		if user.OTPLastResendAt != nil {
+			cooldown := getOTPResendCooldown(user.OTPResendCount)
+			nextResendAt := user.OTPLastResendAt.Add(cooldown)
+			if time.Now().Before(nextResendAt) {
+				return &ResendOTPResult{
+					CanResend:    false,
+					NextResendAt: nextResendAt.Unix(),
+				}, errors.New("silakan tunggu sebelum mengirim ulang")
+			}
+		}
+		newResendCount := user.OTPResendCount + 1
+		if err := s.userRepo.UpdateOTPWithResend(email, otpCode, otpExpiresAt, newResendCount); err != nil {
+			return nil, fmt.Errorf("failed to update OTP: %w", err)
+		}
+		s.sendResetPasswordOTP(email, otpCode)
+		nextCooldown := getOTPResendCooldown(newResendCount)
+		nextResendAt := time.Now().Add(nextCooldown)
+		return &ResendOTPResult{
+			CanResend:    false,
+			NextResendAt: nextResendAt.Unix(),
+		}, nil
 	}
 
-	// Send OTP email via RabbitMQ asynchronously (non-blocking)
-	// Only send if user exists in database (checked above)
+	if err := s.userRepo.UpdateOTP(email, otpCode, otpExpiresAt); err != nil {
+		return nil, fmt.Errorf("failed to update OTP: %w", err)
+	}
+	s.sendResetPasswordOTP(email, otpCode)
+	return &ResendOTPResult{CanResend: true, NextResendAt: 0}, nil
+}
+
+func (s *authService) sendResetPasswordOTP(email, otpCode string) {
 	go func() {
-		s.ensureRabbitMQ() // Try to reconnect if needed
+		s.ensureRabbitMQ()
 		if s.rabbitMQ != nil {
 			emailMsg := util.EmailMessage{
 				To:      email,
@@ -491,9 +576,6 @@ func (s *authService) RequestResetPassword(email string) error {
 			log.Printf("Warning: RabbitMQ not available, reset password OTP email not sent for %s", email)
 		}
 	}()
-
-	// Return immediately without waiting for email to be sent
-	return nil
 }
 
 func (s *authService) VerifyResetPassword(email, otpCode, newPassword string) error {
