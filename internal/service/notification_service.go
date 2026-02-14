@@ -102,8 +102,9 @@ func (s *notificationService) sendNotification(
 			if postID, ok := data["post_id"].(string); ok {
 				notification.TargetID = &postID
 			}
-		} else {
-			// For other types, use friendship_id or target_id
+		} else if notifType != model.NotificationTypeRolePurchased {
+			// For other types (except role_purchased), use friendship_id or target_id.
+			// role_purchased uses order_id which is not UUID; target_id column is UUID, so leave it nil and keep order_id in Data only.
 			if targetID, ok := data["friendship_id"].(string); ok {
 				notification.TargetID = &targetID
 			} else if targetID, ok := data["target_id"].(string); ok {
