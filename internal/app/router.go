@@ -148,7 +148,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	likeService := service.NewLikeService(likeRepo, userRepo, postRepo, commentRepo)
 	chatService := service.NewChatService(chatRepo, userRepo, friendshipRepo)
 	groupService := service.NewGroupService(groupRepo, userRepo)
-	paymentService := service.NewPaymentService(paymentRepo, rolePriceRepo, userRepo, cfg, wsHub)
+	paymentService := service.NewPaymentService(paymentRepo, rolePriceRepo, userRepo, notificationService, cfg, wsHub)
 	rolePriceService := service.NewRolePriceService(rolePriceRepo)
 
 	// Initialize notification worker if RabbitMQ is available

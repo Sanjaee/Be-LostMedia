@@ -21,6 +21,7 @@ type NotificationService interface {
 	SendPostUploadCompletedNotification(userID, postID string, mediaCount int, mediaType ...string) error
 	SendPostLikedNotification(receiverID, senderID, senderName, postID string) error
 	SendRoleUpdatedNotification(receiverID, senderID, senderName, newRole string) error
+	SendRolePurchasedNotification(userID, roleName, roleLabel string, orderID string) error
 	CheckPostLikedNotificationExists(senderID, postID string) (bool, error)
 	GetNotificationsByUserID(userID string, limit, offset int) ([]*model.Notification, error)
 	GetUnreadNotifications(userID string) ([]*model.Notification, error)
@@ -383,6 +384,21 @@ func (s *notificationService) SendPostLikedNotification(receiverID, senderID, se
 		message,
 		data,
 	)
+}
+
+// SendRolePurchasedNotification sends a notification when user successfully purchases/upgrades role
+func (s *notificationService) SendRolePurchasedNotification(userID, roleName, roleLabel, orderID string) error {
+	title := "Role Berhasil Dibeli"
+	message := fmt.Sprintf("Selamat! Role Anda telah di-upgrade menjadi %s.", roleLabel)
+	data := map[string]interface{}{
+		"role":      roleName,
+		"order_id":  orderID,
+		"role_name": roleLabel,
+	}
+	if orderID != "" {
+		data["target_id"] = orderID
+	}
+	return s.sendNotification(userID, model.NotificationTypeRolePurchased, title, message, data)
 }
 
 // SendRoleUpdatedNotification sends a notification when owner changes a user's role

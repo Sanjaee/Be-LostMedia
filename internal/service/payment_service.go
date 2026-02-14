@@ -35,11 +35,14 @@ type PaymentService interface {
 }
 
 type paymentService struct {
-	paymentRepo   repository.PaymentRepository
-	rolePriceRepo repository.RolePriceRepository
-	userRepo      repository.UserRepository
-	cfg           *config.Config
-	wsHub         *websocket.Hub
+	paymentRepo         repository.PaymentRepository
+	rolePriceRepo       repository.RolePriceRepository
+	userRepo            repository.UserRepository
+	notificationService interface {
+		SendRolePurchasedNotification(userID, roleName, roleLabel, orderID string) error
+	}
+	cfg   *config.Config
+	wsHub *websocket.Hub
 }
 
 // CreatePaymentForRoleRequest untuk upgrade role - pakai harga dari role_prices
@@ -139,10 +142,13 @@ type midtransAction struct {
 	URL    string `json:"url"`
 }
 
-func NewPaymentService(paymentRepo repository.PaymentRepository, rolePriceRepo repository.RolePriceRepository, userRepo repository.UserRepository, cfg *config.Config, wsHub *websocket.Hub) PaymentService {
+func NewPaymentService(paymentRepo repository.PaymentRepository, rolePriceRepo repository.RolePriceRepository, userRepo repository.UserRepository, notificationService interface {
+	SendRolePurchasedNotification(userID, roleName, roleLabel, orderID string) error
+}, cfg *config.Config, wsHub *websocket.Hub) PaymentService {
 	return &paymentService{
-		paymentRepo:   paymentRepo,
-		rolePriceRepo: rolePriceRepo,
+		paymentRepo:         paymentRepo,
+		rolePriceRepo:       rolePriceRepo,
+		notificationService: notificationService,
 		userRepo:      userRepo,
 		cfg:           cfg,
 		wsHub:         wsHub,
@@ -556,6 +562,14 @@ func (s *paymentService) updatePaymentFromMidtransResponse(payment *model.Paymen
 			log.Printf("Failed to upgrade user role after payment: %v", err)
 		} else {
 			log.Printf("User %s upgraded to role %s after payment success", updatedPayment.UserID, updatedPayment.TargetRole)
+			// Kirim notifikasi role berhasil dibeli
+			roleLabel := updatedPayment.TargetRole
+			if rp, err := s.rolePriceRepo.FindByRole(updatedPayment.TargetRole); err == nil && rp.Name != "" {
+				roleLabel = rp.Name
+			}
+			if s.notificationService != nil {
+				_ = s.notificationService.SendRolePurchasedNotification(updatedPayment.UserID, updatedPayment.TargetRole, roleLabel, updatedPayment.OrderID)
+			}
 		}
 	}
 
