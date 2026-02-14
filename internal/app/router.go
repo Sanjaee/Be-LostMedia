@@ -46,7 +46,7 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	}
 
 	// Auto migrate
-	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.GroupMember{}, &model.Comment{}, &model.Like{}, &model.PostView{}, &model.ChatMessage{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Profile{}, &model.Friendship{}, &model.Notification{}, &model.Post{}, &model.PostTag{}, &model.PostLocation{}, &model.Group{}, &model.GroupMember{}, &model.Comment{}, &model.Like{}, &model.PostView{}, &model.ChatMessage{}, &model.Payment{}, &model.RolePrice{}); err != nil {
 		panic("Failed to migrate database: " + err.Error())
 	}
 
@@ -68,6 +68,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	likeRepo := repository.NewLikeRepository(db, redisClient)
 	chatRepo := repository.NewChatRepository(db)
 	groupRepo := repository.NewGroupRepository(db, redisClient)
+	paymentRepo := repository.NewPaymentRepository(db)
+	rolePriceRepo := repository.NewRolePriceRepository(db)
 
 	// Initialize RabbitMQ with retry logic
 	rabbitMQ := initRabbitMQWithRetry(cfg)
@@ -146,6 +148,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	likeService := service.NewLikeService(likeRepo, userRepo, postRepo, commentRepo)
 	chatService := service.NewChatService(chatRepo, userRepo, friendshipRepo)
 	groupService := service.NewGroupService(groupRepo, userRepo)
+	paymentService := service.NewPaymentService(paymentRepo, rolePriceRepo, userRepo, cfg, wsHub)
+	rolePriceService := service.NewRolePriceService(rolePriceRepo)
 
 	// Initialize notification worker if RabbitMQ is available
 	// TODO: Re-enable RabbitMQ worker later for async processing
@@ -187,6 +191,8 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	likeHandler := NewLikeHandlerWithNotification(likeService, notificationService, postService, userRepo, cfg.JWTSecret)
 	chatHandler := NewChatHandler(chatService, wsHub)
 	groupHandler := NewGroupHandler(groupService, cloudinaryClient, cfg.JWTSecret)
+	paymentHandler := NewPaymentHandler(paymentService)
+	rolePriceHandler := NewRolePriceHandler(rolePriceService)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -221,6 +227,14 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			}
 		}
 
+		// Role prices (public: list/get untuk tampil harga di frontend)
+		rolePrices := api.Group("/role-prices")
+		{
+			rolePrices.GET("", rolePriceHandler.ListRolePrices)
+			rolePrices.GET("/role/:role", rolePriceHandler.GetRolePriceByRole)
+			rolePrices.GET("/:id", rolePriceHandler.GetRolePrice)
+		}
+
 		// Admin routes (owner only)
 		admin := api.Group("/admin")
 		{
@@ -232,6 +246,10 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 				admin.POST("/users/:id/ban", userHandler.BanUser)
 				admin.POST("/users/:id/unban", userHandler.UnbanUser)
 				admin.PUT("/users/:id/role", userHandler.UpdateUserRole)
+				// Role prices CRUD (admin only)
+				admin.POST("/role-prices", rolePriceHandler.CreateRolePrice)
+				admin.PUT("/role-prices/:id", rolePriceHandler.UpdateRolePrice)
+				admin.DELETE("/role-prices/:id", rolePriceHandler.DeleteRolePrice)
 			}
 		}
 
@@ -362,6 +380,24 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 			chat.PUT("/read/:senderID", chatHandler.MarkAsRead)
 			chat.GET("/unread/by-senders", chatHandler.GetUnreadCountBySenders)
 			chat.GET("/unread/count", chatHandler.GetUnreadCount)
+		}
+
+		// Payment routes
+		payments := api.Group("/payments")
+		{
+			// Webhook (no auth - Midtrans calls this)
+			payments.POST("/webhook", paymentHandler.HandleWebhook)
+
+			// Protected routes
+			payments.Use(authHandler.AuthMiddleware())
+			{
+				payments.POST("", paymentHandler.CreatePayment)
+				payments.POST("/role", paymentHandler.CreatePaymentForRole)
+				payments.GET("", paymentHandler.GetMyPayments)
+				payments.GET("/order/:orderID", paymentHandler.GetPaymentByOrderID)
+				payments.POST("/:orderID/status", paymentHandler.CheckPaymentStatus)
+				payments.GET("/:id", paymentHandler.GetPayment)
+			}
 		}
 
 		// Group routes

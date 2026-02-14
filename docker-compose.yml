@@ -1,3 +1,8 @@
+# Limit download: Docker Compose tidak mendukung limit di file ini.
+# Salin isi daemon.json.example ke Docker Desktop:
+#   Settings > Docker Engine > tambahkan "max-concurrent-downloads": 3
+# Atau salin ke ~/.docker/daemon.json lalu restart Docker.
+#
 services:
   app:
     build:
@@ -49,6 +54,11 @@ services:
       - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY:-}
       - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET:-}
       - CLOUDINARY_FOLDER=${CLOUDINARY_FOLDER:-social-media}
+      # Midtrans
+      - MIDTRANS_SERVER_KEY=${MIDTRANS_SERVER_KEY:-}
+      - MIDTRANS_CLIENT_KEY=${MIDTRANS_CLIENT_KEY:-}
+      - MIDTRANS_IS_PROD=${MIDTRANS_IS_PROD:-false}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
     depends_on:
       db:
         condition: service_healthy

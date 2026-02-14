@@ -164,7 +164,74 @@ RABBITMQ_HOST=localhost
 RABBITMQ_PORT=5672
 RABBITMQ_USER=your_user
 RABBITMQ_PASSWORD=your_password
+
+# Midtrans
+MIDTRANS_SERVER_KEY=SB-Mid-server-xxx
+MIDTRANS_CLIENT_KEY=SB-Mid-client-xxx
+MIDTRANS_IS_PROD=false
+FRONTEND_URL=http://localhost:3000
 ```
+
+## Role Prices (Harga per Role)
+
+CRUD harga role untuk payment upgrade. Relasi dengan `user_type` di tabel `users`.
+
+### Tabel `role_prices`
+
+| Kolom       | Tipe      | Keterangan                              |
+|-------------|-----------|-----------------------------------------|
+| id          | uuid      | PK                                      |
+| role        | varchar   | Nama role (sama dengan user_type)       |
+| name        | varchar   | Nama tampilan (e.g. "Premium", "VIP")   |
+| description | text      | Deskripsi                               |
+| price       | int       | Harga dalam rupiah                      |
+| is_active   | boolean   | Aktif/tidak                             |
+| sort_order  | int       | Urutan tampilan                         |
+
+### REST API Endpoints
+
+| Method | Endpoint                           | Auth | Keterangan                                |
+|--------|------------------------------------|------|-------------------------------------------|
+| GET    | `/api/v1/role-prices`              | -    | List role prices. Query: `include_inactive=false` |
+| GET    | `/api/v1/role-prices/role/:role`   | -    | Detail by role (e.g. premium, vip)        |
+| GET    | `/api/v1/role-prices/:id`          | -    | Detail by ID                              |
+| POST   | `/api/v1/admin/role-prices`        | owner| Create role price                         |
+| PUT    | `/api/v1/admin/role-prices/:id`    | owner| Update role price                         |
+| DELETE | `/api/v1/admin/role-prices/:id`    | owner| Delete role price                         |
+
+Role `owner` tidak boleh punya price (hanya bisa di-set manual).
+
+## Payment (Midtrans)
+
+### REST API Endpoints
+
+| Method | Endpoint                           | Keterangan                                                     |
+|--------|------------------------------------|----------------------------------------------------------------|
+| POST   | `/api/v1/payments`                 | Buat payment (auth). Body: `{ amount, item_name, payment_method, bank?, card_token_id? }` |
+| POST   | `/api/v1/payments/role`            | Buat payment untuk upgrade role (auth). Body: `{ target_role, payment_method, bank?, card_token_id? }`. Harga diambil dari role_prices. |
+| GET    | `/api/v1/payments`                 | Daftar payment user (auth). Query: `limit`, `offset`           |
+| GET    | `/api/v1/payments/:id`             | Detail payment by ID (auth)                                    |
+| GET    | `/api/v1/payments/order/:orderID`  | Detail payment by order ID (auth)                              |
+| POST   | `/api/v1/payments/:orderID/status` | Cek status dari Midtrans (auth)                                |
+| POST   | `/api/v1/payments/webhook`         | Webhook Midtrans (no auth)                                     |
+
+### Flow Upgrade Role via Payment
+
+1. Admin set harga di `/api/v1/admin/role-prices` (e.g. role=premium, price=50000)
+2. User panggil `POST /api/v1/payments/role` dengan `{ target_role: "premium", payment_method: "gopay" }`
+3. User bayar via VA/GoPay/QRIS
+4. Webhook Midtrans → payment success → **user_type otomatis di-update** ke target_role
+
+### Payment Methods
+
+- `bank_transfer` – BCA, BNI, Mandiri, dll (param `bank`)
+- `gopay`
+- `qris`
+- `credit_card` – butuh `card_token_id` dari Snap JS di frontend
+
+### Webhook URL (Midtrans Dashboard)
+
+Set di Midtrans: `https://your-domain.com/api/v1/payments/webhook`
 
 ## Development
 

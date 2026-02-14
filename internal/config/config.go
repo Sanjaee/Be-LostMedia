@@ -58,6 +58,12 @@ type Config struct {
 	CloudinaryAPIKey    string
 	CloudinaryAPISecret string
 	CloudinaryFolder    string
+
+	// Midtrans
+	MidtransServerKey string
+	MidtransClientKey string
+	MidtransIsProd    bool
+	FrontendURL       string
 }
 
 func Load() (*Config, error) {
@@ -115,6 +121,17 @@ func Load() (*Config, error) {
 		CloudinaryAPIKey:    getEnv("CLOUDINARY_API_KEY", ""),
 		CloudinaryAPISecret: getEnv("CLOUDINARY_API_SECRET", ""),
 		CloudinaryFolder:    getEnv("CLOUDINARY_FOLDER", "social-media"),
+
+		// Midtrans
+		MidtransServerKey: getEnv("MIDTRANS_SERVER_KEY", ""),
+		MidtransClientKey: getEnv("MIDTRANS_CLIENT_KEY", ""),
+		MidtransIsProd:    getEnvBool("MIDTRANS_IS_PROD", false),
+		FrontendURL:       getEnv("FRONTEND_URL", ""), // Empty = use CLIENT_URL from env
+	}
+
+	// Fallback FrontendURL to ClientURL for Midtrans callbacks
+	if cfg.FrontendURL == "" {
+		cfg.FrontendURL = cfg.ClientURL
 	}
 
 	// Build database URL if not provided
